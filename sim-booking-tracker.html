@@ -883,59 +883,46 @@ function renderCalendar(){
     html+='</tr>';
 
     assignRows(g.list.filter(b=>b.m_arrival<windowEndIso&&b.m_departure>windowStartIso)).forEach(row=>{
-      // ### 9b --- per-day segments: arrival = right half, departure = left half, middle nights = full cell
-      const segs=Array.from({length:days.length},()=>[]);
-      row.forEach(b=>{
-        const arrIdx=Math.round((toDate(b.m_arrival)-windowStart)/86400000);
-        const depIdx=Math.round((toDate(b.m_departure)-windowStart)/86400000);
-        const arrVis=arrIdx>=0&&arrIdx<days.length;
-        const depVis=depIdx>=0&&depIdx<days.length;
-        const visStart=arrVis?arrIdx:0,visEnd=depVis?depIdx:days.length-1;
-        const fullStart=arrVis?arrIdx+1:0,fullEnd=depVis?depIdx-1:days.length-1;
-        for(let i=Math.max(0,fullStart);i<=Math.min(days.length-1,fullEnd);i++)segs[i].push({side:'full',b,visStart,visEnd});
-        if(arrVis)segs[arrIdx].push({side:'right',b,visStart,visEnd});
-        if(depVis)segs[depIdx].push({side:'left',b,visStart,visEnd});
-      });
-
-      const labelFor=(b,widthPx)=>`<span style="display:inline-block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;width:${Math.max(0,widthPx)}px;text-align:left;${b.details&&b.details.note?'color:#e0c634;':''}">${b.guest_name||''}${b.details&&Number(b.details.guests)>1?'*'+b.details.guests:''}${b.room_number?'/r'+b.room_number:''}</span>`;
-      const titleFor=(b,isModified)=>{const parts=[];if(isModified)parts.push('Modified');if(b.room_number)parts.push('Room '+b.room_number);if(b.details&&b.details.note)parts.push('Note: '+b.details.note);return parts.join(' \u00b7 ').replace(/"/g,'&quot;');};
-
+      const runs=[];
+      let idx=0;
+      while(idx<days.length){
+        const ds=toISO(days[idx]);
+        const b=row.find(x=>isOccupiedNormal(ds,x));
+        let end=idx;
+        while(end+1<days.length){
+          const nds=toISO(days[end+1]);
+          const nb=row.find(x=>isOccupiedNormal(nds,x));
+          if(nb!==b)break;
+          end++;
+        }
+        runs.push({start:idx,end:end,b:b});
+        idx=end+1;
+      }
       html+='<tr><td class="stickyCol"></td>';
-      for(let i=0;i<days.length;i++){
-        const cellSegs=segs[i],ds=toISO(days[i]);
-        if(cellSegs.length===0){html+=`<td class="${ds===todayIso?'todayCol':''}"></td>`;continue;}
-        if(cellSegs.length===1){
-          const seg=cellSegs[0],b=seg.b;
-          const isModified=b.arrival!==b.m_arrival||b.departure!==b.m_departure||b.apartment_id!==b.m_apartment_id;
-          const bc=isModified?'var(--danger)':'var(--text)';
-          let bg=color;
-          if(seg.side==='right')bg=`linear-gradient(to right, transparent 50%, ${color} 50%)`;
-          else if(seg.side==='left')bg=`linear-gradient(to right, ${color} 50%, transparent 50%)`;
-          let borderStyle='border-top:2px solid '+bc+';border-bottom:2px solid '+bc+';';
-          if(i===seg.visStart)borderStyle+='border-left:2px solid '+bc+';';
-          if(i===seg.visEnd)borderStyle+='border-right:2px solid '+bc+';';
-          let label='';
-          if(i===seg.visStart&&seg.side!=='left'){
-            const visLen=seg.visEnd-seg.visStart+1,offset=seg.side==='right'?32:0;
-            label=labelFor(b,visLen*64-6-offset);
-          }
-          const cellOverflow=(i===seg.visStart)?'overflow:visible;':'';
-          html+=`<td class="bookingCell${ds===todayIso?' todayCol':''}" data-id="${b.id}" title="${titleFor(b,isModified)}" style="${cellOverflow}background:${bg};${borderStyle}">${label}</td>`;
-        } else {
-          const leftSeg=cellSegs.find(s=>s.side==='left'),rightSeg=cellSegs.find(s=>s.side==='right');
-          const half=(seg,side)=>{
-            const b=seg.b;
+      runs.forEach(run=>{
+        const b=run.b,len=run.end-run.start+1;
+        for(let i=run.start;i<=run.end;i++){
+          let borderStyle='',titleAttr='',label='';
+          if(b){
             const isModified=b.arrival!==b.m_arrival||b.departure!==b.m_departure||b.apartment_id!==b.m_apartment_id;
             const bc=isModified?'var(--danger)':'var(--text)';
-            const isStart=side==='right'&&i===seg.visStart;
-            const isEnd=side==='left'&&i===seg.visEnd;
-            const label=isStart?labelFor(b,(seg.visEnd-seg.visStart+1)*64-6-32):'';
-            return `<div class="halfSeg" data-id="${b.id}" title="${titleFor(b,isModified)}" style="position:absolute;top:0;bottom:0;${side}:0;width:50%;cursor:pointer;background:${color};border-top:2px solid ${bc};border-bottom:2px solid ${bc};${isStart?'border-left:2px solid '+bc+';':''}${isEnd?'border-right:2px solid '+bc+';':''}">${label}</div>`;
-          };
-          const needsOverflow=rightSeg.visStart===i;
-          html+=`<td class="${ds===todayIso?'todayCol':''}" style="position:relative;padding:0;${needsOverflow?'overflow:visible;':''}">${half(leftSeg,'left')}${half(rightSeg,'right')}</td>`;
+            borderStyle='border-top:2px solid '+bc+';border-bottom:2px solid '+bc+';';
+            if(i===run.start)borderStyle+='border-left:2px solid '+bc+';';
+            if(i===run.end)borderStyle+='border-right:2px solid '+bc+';';
+            const parts=[];
+            if(isModified)parts.push('Modified');
+            if(b.room_number)parts.push('Room '+b.room_number);
+            if(b.details&&b.details.note)parts.push('Note: '+b.details.note);
+            titleAttr=parts.join(' \u00b7 ').replace(/"/g,'&quot;');
+            if(i===run.start){
+              const widthPx=len*64-6;
+              label=`<span style="display:inline-block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;width:${widthPx}px;text-align:left;${b.details&&b.details.note?'color:#e0c634;':''}">${b.guest_name||''}${b.details&&Number(b.details.guests)>1?'*'+b.details.guests:''}${b.room_number?'/r'+b.room_number:''}</span>`;
+            }
+          }
+          const cellOverflow=(b&&i===run.start)?'overflow:visible;':'';
+          html+=`<td class="${b?'bookingCell':''}${toISO(days[i])===todayIso?' todayCol':''}" data-id="${b?b.id:''}" title="${titleAttr}" style="${cellOverflow}background:${b?color:''};${borderStyle}">${label}</td>`;
         }
-      }
+      });
       html+='</tr>';
     });
   });
@@ -955,9 +942,9 @@ function renderCalendar(){
   calendarWrap.querySelectorAll('.dateCell').forEach(th=>{
     th.onclick=()=>openDayDialog(th.dataset.date);
   });
-  calendarWrap.querySelectorAll('.bookingCell,.halfSeg').forEach(el=>{
-    el.onclick=()=>{
-      const b=bookings.find(x=>x.id===el.dataset.id);
+  calendarWrap.querySelectorAll('.bookingCell').forEach(td=>{
+    td.onclick=()=>{
+      const b=bookings.find(x=>x.id===td.dataset.id);
       if(b)openEditBookingModal(b);
     };
   });
