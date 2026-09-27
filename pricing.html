@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Pricing</title>
+<style>
+body{font-family:sans-serif;margin:0;color:#222}
+.top{position:sticky;top:0;background:#fff;border-bottom:1px solid #ccc;padding:8px 16px;z-index:10}
+.top h2{margin:0 0 6px;font-size:18px}
+.tabs{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.tab{padding:7px 16px;border:1px solid #ccc;border-radius:6px 6px 0 0;background:#eee;cursor:pointer}
+.tab.on{background:#fff;border-bottom-color:#fff;font-weight:bold}
+.chip{font-size:12px;border-radius:10px;padding:3px 10px;background:#eef}
+.chip.dirty{background:#fdebd0;color:#935116}
+.chip.clean{background:#d5f5e3;color:#1e8449}
+.pane{display:none;padding:12px 16px;max-width:1000px}
+.pane.on{display:block}
+h3{margin:0 0 6px;font-size:15px}
+.bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:8px 0}
+button{padding:6px 11px;cursor:pointer}
+input,select{padding:4px;box-sizing:border-box}
+input[type=number]{width:72px}
+input[type=text],input[type=date]{width:125px}
+.card{border:1px solid #ccc;border-radius:6px;padding:10px;margin:10px 0}
+.card.off{background:#f6f6f6}
+.card.off .body{display:none}
+.row{display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin:4px 0}
+table.f{border-collapse:collapse;margin:4px 0}
+table.f td,table.f th{padding:2px 5px;font-size:12px;text-align:left}
+.hint{font-size:12px;color:#666;margin:2px 0 4px}
+.msg{font-size:13px;margin-left:6px;color:#555}
+.warn{color:#b03a2e}
+.ok{color:#1e8449}
+.dow{display:flex;gap:6px;flex-wrap:wrap}
+.dow div{text-align:center;font-size:12px}
+.dow input{width:56px}
+label.chk{display:flex;gap:4px;align-items:center;font-size:13px}
+.x{padding:1px 7px}
+.wrap{overflow:auto;max-height:58vh;border:1px solid #ccc;margin-top:8px}
+table.g{border-collapse:collapse;font-size:12px}
+table.g td,table.g th{border:1px solid #ddd;padding:3px 5px;text-align:center;min-width:44px}
+table.g th{position:sticky;top:0;background:#f5f5f5;z-index:2}
+table.g td.name,table.g th.name{position:sticky;left:0;background:#f5f5f5;text-align:left;min-width:80px;z-index:3}
+table.g tr.apt td{background:#e8eef7;font-weight:bold;text-align:left}
+table.g td.b{background:#ddd;color:#888}
+table.g td.orph{outline:2px solid #e67e22;outline-offset:-2px}
+table.g td.cap{font-style:italic}
+table.g td.sel{box-shadow:inset 0 0 0 2px #333}
+pre{background:#f7f7f7;padding:8px;font-size:12px;overflow:auto;max-height:240px;margin:0}
+.banner{background:#fdebd0;border:1px solid #e5b98a;border-radius:6px;padding:6px 10px;font-size:13px;margin:6px 0}
+</style>
+</head>
+<body>
+<div class="top">
+  <h2>Pricing <span class="chip">simulation only, nothing is written to Smoobu</span></h2>
+  <div class="tabs">
+    <div class="tab on" data-tab="edit">1. Strategies &amp; apartments</div>
+    <div class="tab" data-tab="sim">2. Simulator &amp; save</div>
+    <span class="chip clean" id="dirty">saved</span>
+  </div>
+</div>
+
+<div class="pane on" id="edit">
+  <div class="banner">Everything here is a <b>draft</b>. Nothing is stored until you test it in tab 2 and press <b>Save as active</b> there.</div>
+  <div class="card">
+    <h3>Apartments</h3>
+    <div class="hint">Each apartment keeps its own price limits and chooses which strategy it follows. The limits are yours; the strategy only decides how much to move the price up or down from the base.</div>
+    <table class="f" id="aptTbl"></table>
+  </div>
+  <div class="bar"><b>Strategy</b><select id="sSel"></select><button id="sNew">New</button><button id="sDup">Duplicate</button><button id="sRen">Rename</button><button id="sDel">Delete</button><span class="msg" id="sUsed"></span></div>
+  <div id="form"></div>
+  <div class="card">
+    <h3>Holiday / event multipliers (all apartments)</h3>
+    <div class="hint">Multiplier applied on top of the strategy result. 1.25 = +25%. Leave every apartment unticked to apply to all. Rows left completely empty are ignored.</div>
+    <div id="events"></div>
+    <button data-act="addEvent">+ Add event</button>
+  </div>
+</div>
+
+<div class="pane" id="sim">
+  <div class="banner" id="simBanner">Testing your draft. Press <b>Save as active</b> only when the grid looks right.</div>
+  <div class="bar">
+    <button id="saveBtn"><b>Save as active</b></button>
+    <button id="discBtn">Discard changes</button>
+    <span class="msg" id="saveMsg"></span>
+  </div>
+  <div class="bar">
+    <span>Sim date: <b id="clock">-</b></span>
+    <button id="runBtn">Refresh preview</button>
+    <button id="backBtn">&#9664; -1 day</button>
+    <button id="fwdBtn">+1 day &#9654;</button>
+    <label>random bookings on +1 <input id="rand" type="number" value="3" min="0"></label>
+  </div>
+  <div class="bar">
+    <label>Jump to <input id="jumpDate" type="date"></label><button id="jumpBtn">Go</button><button id="todayBtn">Back to real today</button>
+    <label>Days shown <input id="hz" type="number" min="1" max="365"></label>
+    <button id="recBtn">Record these prices in sim</button>
+    <button id="resetBtn">Reset sim</button>
+    <span class="msg" id="msg"></span>
+  </div>
+  <div class="wrap"><table class="g" id="tbl"></table></div>
+  <div style="margin-top:10px"><b>Breakdown</b> <span class="msg">click a price cell</span><pre id="detail">-</pre></div>
+</div>
+
+<script>
+// ### 1 --- config, state, helpers
+const WORKER_URL='https://smoobu-proxy-v2.ulnetconzept.workers.dev';
+const $=id=>document.getElementById(id);
+function call(action,extra){
+  return fetch(WORKER_URL,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify(Object.assign({action:action},extra||{}))}).then(r=>r.json());
+}
+function say(id,t,c){const m=$(id);m.textContent=t;m.className='msg '+(c||'');}
+const clone=o=>JSON.parse(JSON.stringify(o));
+let apts=[],S={strategies:{},aptSettings:{},events:[],settings:{horizonDays:60}},saved='',sid='',last=null;
+const DEF={
+occupancy:{tiers:[{min:0,max:30,adj:-5},{min:30,max:60,adj:0},{min:60,max:85,adj:8},{min:85,max:null,adj:15}]},
+pace:{historyDays:90,minSamples:3,tiers:[{min:null,max:70,adj:-8},{min:70,max:130,adj:0},{min:130,max:null,adj:8}]},
+leadtime:{tiers:[{min:0,max:2,adj:-10},{min:2,max:14,adj:0},{min:14,max:45,adj:3},{min:45,max:null,adj:6}]},
+season:{bands:[{from:'06-15',to:'08-31',adj:15}]},
+dow:{days:{0:0,1:-3,2:-3,3:-3,4:0,5:8,6:8}}};
+const FNAME={
+occupancy:['Occupancy','Share of the apartment\'s rooms booked on that night. Read a row as: "when the booked share is from X up to (not including) Y percent, add the Adjust %".'],
+pace:['Booking pace','How fast that night is filling compared with what is normal for the same weekday and lead time. 100 = normal, 130 = filling 30% faster than normal.'],
+leadtime:['Lead time','Days between today and the stay night. 0-2 is last minute, larger numbers are far in advance.'],
+season:['Season','Date bands written as month-day. Use for high or low season.'],
+dow:['Day of week','A flat adjustment for each weekday.']};
+const DAYS=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+function newStrategy(name){
+  return {name:name,factors:clone(DEF),orphan:{enabled:true,discount:20},minNotice:{days:3,floor:38},maxChange:{pct:15}};
+}
+function getP(o,p){return p.split('.').reduce((a,k)=>a==null?a:a[k],o);}
+function setP(o,path,v){
+  const ks=path.split('.'),l=ks.pop();
+  const t=ks.reduce((a,k)=>{if(a[k]==null)a[k]={};return a[k]},o);
+  t[l]=v;
+}
+function draft(){return JSON.stringify({s:S.strategies,a:S.aptSettings,e:S.events,t:S.settings});}
+function refreshDirty(){
+  const d=draft()!==saved,c=$('dirty');
+  c.textContent=d?'unsaved draft':'saved';c.className='chip '+(d?'dirty':'clean');
+}
+
+// ### 2 --- load saved data and seed a starting draft if nothing is stored yet
+async function init(){
+  const a=await call('getMeta',{key:'apartments'});apts=a.value||[];
+  const st=await call('getMeta',{key:'pricing_strategies'});
+  const ap=await call('getMeta',{key:'pricing_apartments'});
+  const ev=await call('getMeta',{key:'pricing_events'});
+  const se=await call('getMeta',{key:'pricing_settings'});
+  S.strategies=st.value||{};S.aptSettings=ap.value||{};S.events=Array.isArray(ev.value)?ev.value:[];
+  S.settings=Object.assign({horizonDays:60,enabled:false,dryRun:true},se.value||{});
+  const fresh=!Object.keys(S.strategies).length;
+  saved=fresh?'':draft();
+  if(fresh)S.strategies.standard=newStrategy('Standard');
+  sid=Object.keys(S.strategies)[0];
+  apts.forEach(x=>{if(!S.aptSettings[x.id])S.aptSettings[x.id]={strategyId:sid,base:45,min:35,max:70,spread:5};});
+  $('hz').value=S.settings.horizonDays;
+  renderAll();refreshDirty();
+  if(fresh)say('saveMsg','Starting draft loaded (nothing saved yet).');
+}
+
+// ### 3 --- tabs
+document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{
+  document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('on',x===t));
+  document.querySelectorAll('.pane').forEach(x=>x.classList.toggle('on',x.id===t.dataset.tab));
+  if(t.dataset.tab==='sim')runSim(false);
+});
+
+// ### 4 --- render editor
+function num(path,val){return '<input type="number" step="any" data-p="'+path+'" data-t="n" value="'+(val==null?'':val)+'">';}
+function tierTable(f,c){
+  return '<table class="f"><tr><th>From (incl.)</th><th>Up to (excl.)</th><th>Adjust %</th><th></th></tr>'+
+  (c.tiers||[]).map((r,i)=>'<tr><td>'+num('s.factors.'+f+'.tiers.'+i+'.min',r.min)+'</td><td>'+num('s.factors.'+f+'.tiers.'+i+'.max',r.max)+'</td><td>'+num('s.factors.'+f+'.tiers.'+i+'.adj',r.adj)+'</td><td><button class="x" data-act="delTier" data-f="'+f+'" data-i="'+i+'">x</button></td></tr>').join('')+
+  '</table><button data-act="addTier" data-f="'+f+'">+ tier</button><div class="hint">Blank From / Up to = no limit at that end (not zero).</div>';
+}
+function factorCard(f,s){
+  const c=s.factors[f],on=!!c;let b='';
+  if(on){
+    if(f==='season')b='<table class="f"><tr><th>From (MM-DD)</th><th>To (MM-DD)</th><th>Adjust %</th><th></th></tr>'+(c.bands||[]).map((r,i)=>'<tr><td><input type="text" data-p="s.factors.season.bands.'+i+'.from" data-t="s" value="'+r.from+'"></td><td><input type="text" data-p="s.factors.season.bands.'+i+'.to" data-t="s" value="'+r.to+'"></td><td>'+num('s.factors.season.bands.'+i+'.adj',r.adj)+'</td><td><button class="x" data-act="delBand" data-i="'+i+'">x</button></td></tr>').join('')+'</table><button data-act="addBand">+ band</button><div class="hint">Bands may wrap the new year (12-15 to 01-05). First match wins.</div>';
+    else if(f==='dow')b='<div class="dow">'+DAYS.map((d,i)=>'<div>'+d+'<br>'+num('s.factors.dow.days.'+i,(c.days||{})[i])+'</div>').join('')+'</div>';
+    else if(f==='pace')b='<div class="row"><label>History window (days) '+num('s.factors.pace.historyDays',c.historyDays==null?90:c.historyDays)+'</label><label>Min past samples '+num('s.factors.pace.minSamples',c.minSamples==null?3:c.minSamples)+'</label></div><div class="hint">Min past samples = how many past same-weekday dates must exist before pace counts. With fewer, pace adds 0.</div>'+tierTable(f,c);
+    else b=tierTable(f,c);
+  }
+  return '<div class="card'+(on?'':' off')+'"><label class="chk"><input type="checkbox" data-act="toggle" data-f="'+f+'"'+(on?' checked':'')+'><b>'+FNAME[f][0]+'</b></label><div class="hint">'+FNAME[f][1]+'</div><div class="body">'+b+'</div></div>';
+}
+function renderAll(){
+  $('sSel').innerHTML=Object.keys(S.strategies).map(k=>'<option value="'+k+'"'+(k===sid?' selected':'')+'>'+S.strategies[k].name+'</option>').join('');
+  const used=apts.filter(a=>S.aptSettings[a.id]&&S.aptSettings[a.id].strategyId===sid).map(a=>a.name);
+  $('sUsed').textContent=used.length?'Used by: '+used.join(', ')+' (editing changes all of them)':'Not used by any apartment';
+  const opts=k=>'<option value="">(not priced)</option>'+Object.keys(S.strategies).map(x=>'<option value="'+x+'"'+(x===k?' selected':'')+'>'+S.strategies[x].name+'</option>').join('');
+  $('aptTbl').innerHTML='<tr><th>Apartment</th><th>Strategy</th><th>Base</th><th>Min</th><th>Max</th><th>Spread %</th></tr>'+apts.map(a=>{
+    const c=S.aptSettings[a.id],p='a.'+a.id+'.';
+    return '<tr><td>'+a.name+'</td><td><select data-p="'+p+'strategyId" data-t="s">'+opts(c.strategyId)+'</select></td><td>'+num(p+'base',c.base)+'</td><td>'+num(p+'min',c.min)+'</td><td>'+num(p+'max',c.max)+'</td><td>'+num(p+'spread',c.spread)+'</td></tr>';
+  }).join('')+'</table><div class="hint">Base = starting price. Min / Max = price can never go outside these. Spread % = each room gets a small fixed offset of up to this many % so rooms in one apartment differ slightly (0 = identical).</div>';
+  const s=S.strategies[sid];
+  let h='';
+  if(s){
+    ['occupancy','pace','leadtime','season','dow'].forEach(f=>h+=factorCard(f,s));
+    const o=s.orphan||{},n=s.minNotice||{},m=s.maxChange||{};
+    h+='<div class="card"><h3>Extras</h3>'+
+    '<div class="row"><label class="chk"><input type="checkbox" data-p="s.orphan.enabled" data-t="c"'+(o.enabled?' checked':'')+'>Orphan-gap discount</label><label>Discount % '+num('s.orphan.discount',o.discount)+'</label></div><div class="hint">A single free night between two bookings gets this discount.</div>'+
+    '<div class="row"><label>Minimum notice: for stays within '+num('s.minNotice.days',n.days)+' days, the price never drops below '+num('s.minNotice.floor',n.floor)+'</label></div><div class="hint">Stops last-minute discounts from undercutting you. Leave days blank to switch off. Keep the floor between the apartment min and max.</div>'+
+    '<div class="row"><label>Max change per run (%) '+num('s.maxChange.pct',m.pct)+'</label></div><div class="hint">A price can move at most this % from its previous price in one pass.</div></div>';
+  }
+  $('form').innerHTML=h;
+  $('events').innerHTML=S.events.map((e,i)=>'<div class="row"><input type="text" data-p="ev.'+i+'.name" data-t="s" placeholder="Name" value="'+(e.name||'')+'"><input type="date" data-p="ev.'+i+'.from" data-t="s" value="'+(e.from||'')+'"><input type="date" data-p="ev.'+i+'.to" data-t="s" value="'+(e.to||'')+'"><label>x '+num('ev.'+i+'.mult',e.mult)+'</label>'+
+    apts.map(a=>'<label class="chk"><input type="checkbox" data-act="evApt" data-i="'+i+'" data-a="'+a.id+'"'+((e.apartmentIds||[]).includes(a.id)?' checked':'')+'>'+a.name+'</label>').join('')+
+    '<button class="x" data-act="delEvent" data-i="'+i+'">x</button></div>').join('');
+}
+
+// ### 5 --- input and click handling (all edits stay in the draft)
+function root(){return {s:S.strategies[sid],a:S.aptSettings,ev:S.events};}
+function onEdit(t){
+  const path=t.dataset.p;
+  if(!path)return;
+  const v=t.dataset.t==='c'?t.checked:t.dataset.t==='n'?(t.value===''?null:Number(t.value)):t.value;
+  setP(root(),path,v);
+  refreshDirty();
+  if(path.endsWith('strategyId'))renderAll();
+}
+document.addEventListener('input',e=>onEdit(e.target));
+document.addEventListener('change',e=>{if(e.target.tagName==='SELECT'&&e.target.dataset.p)onEdit(e.target);});
+$('sSel').onchange=()=>{sid=$('sSel').value;renderAll();};
+document.addEventListener('click',e=>{
+  const t=e.target,a=t.dataset.act;
+  if(!a)return;
+  const s=S.strategies[sid],f=t.dataset.f,i=Number(t.dataset.i);
+  if(a==='toggle'){if(t.checked)s.factors[f]=clone(DEF[f]);else delete s.factors[f];}
+  else if(a==='addTier')s.factors[f].tiers.push({min:null,max:null,adj:0});
+  else if(a==='delTier')s.factors[f].tiers.splice(i,1);
+  else if(a==='addBand')s.factors.season.bands.push({from:'01-01',to:'01-31',adj:0});
+  else if(a==='delBand')s.factors.season.bands.splice(i,1);
+  else if(a==='addEvent')S.events.push({name:'',from:'',to:'',mult:1.2,apartmentIds:[]});
+  else if(a==='delEvent')S.events.splice(i,1);
+  else if(a==='evApt'){
+    const ids=S.events[i].apartmentIds||(S.events[i].apartmentIds=[]);
+    const k=ids.indexOf(t.dataset.a);
+    if(t.checked&&k<0)ids.push(t.dataset.a);else if(!t.checked&&k>=0)ids.splice(k,1);
+    refreshDirty();return;
+  }
+  else return;
+  refreshDirty();renderAll();
+});
+$('sNew').onclick=()=>{
+  const n=prompt('Name for the new strategy:');if(!n)return;
+  const k='s'+Date.now();S.strategies[k]=newStrategy(n);sid=k;refreshDirty();renderAll();
+};
+$('sDup').onclick=()=>{
+  const n=prompt('Name for the copy:',S.strategies[sid].name+' copy');if(!n)return;
+  const k='s'+Date.now();S.strategies[k]=Object.assign(clone(S.strategies[sid]),{name:n});sid=k;refreshDirty();renderAll();
+};
+$('sRen').onclick=()=>{
+  const n=prompt('New name:',S.strategies[sid].name);if(!n)return;
+  S.strategies[sid].name=n;refreshDirty();renderAll();
+};
+$('sDel').onclick=()=>{
+  const used=apts.filter(a=>S.aptSettings[a.id]&&S.aptSettings[a.id].strategyId===sid);
+  if(used.length){alert('In use by: '+used.map(a=>a.name).join(', ')+'. Pick another strategy for them first.');return;}
+  if(Object.keys(S.strategies).length<2){alert('Keep at least one strategy.');return;}
+  if(!confirm('Delete strategy "'+S.strategies[sid].name+'"?'))return;
+  delete S.strategies[sid];sid=Object.keys(S.strategies)[0];refreshDirty();renderAll();
+};
+
+// ### 6 --- simulator calls (always send the draft)
+function simBody(x){return Object.assign({strategies:S.strategies,aptSettings:S.aptSettings,events:S.events.filter(e=>e.from&&e.to&&e.mult),days:Number($('hz').value)||60},x||{});}
+async function runSim(persist){
+  say('msg','Running...');
+  const r=await call('simulatePricing',simBody({persist:persist}));
+  show(r);say('msg',persist?'Recorded '+r.changes+' price changes in sim history':'Preview of your draft (nothing saved)');
+}
+async function step(d){
+  say('msg','Stepping...');
+  const r=await call('simulateStep',simBody({stepDays:d,addRandom:d>0?Number($('rand').value)||0:0}));
+  show(r);say('msg','Moved '+(d>0?'forward':'back')+' one day'+(d>0?', random bookings added':'')+'; prices recorded in sim history');
+}
+$('runBtn').onclick=()=>runSim(false);
+$('recBtn').onclick=()=>runSim(true);
+$('fwdBtn').onclick=()=>step(1);
+$('backBtn').onclick=()=>step(-1);
+$('jumpBtn').onclick=async()=>{
+  if(!$('jumpDate').value){say('msg','Pick a date first','warn');return}
+  show(await call('simulateSetDate',simBody({date:$('jumpDate').value})));say('msg','Jumped. Bookings the sim generated after that date are hidden.');
+};
+$('todayBtn').onclick=async()=>{show(await call('simulateSetDate',simBody()));say('msg','Back to real today');};
+$('resetBtn').onclick=async()=>{
+  if(!confirm('Delete all sim recorded prices, generated bookings and reset the date?'))return;
+  await call('resetSim');await runSim(false);say('msg','Sim reset');
+};
+
+// ### 7 --- grid
+function show(r){
+  if(r.error){say('msg',r.error,'warn');return}
+  last=r;$('clock').textContent=r.today;$('jumpDate').value=r.today;
+  const dates=[...new Set(r.days.map(d=>d.date))].sort();
+  const by={};r.days.forEach(d=>{(by[d.apartmentId]=by[d.apartmentId]||{})[d.date]=d});
+  let h='<tr><th class="name">Listing</th>'+dates.map(d=>'<th>'+d.slice(5)+'</th>').join('')+'</tr>';
+  apts.forEach(a=>{
+    if(!by[a.id])return;
+    h+='<tr class="apt"><td colspan="'+(dates.length+1)+'">'+a.name+'</td></tr>';
+    a.listingIds.forEach(id=>{
+      h+='<tr><td class="name">'+id+'</td>'+dates.map(d=>{
+        const day=by[a.id][d],l=day&&day.listings.find(x=>x.id===String(id));
+        if(!l)return'<td></td>';
+        if(l.status==='booked')return'<td class="b">B</td>';
+        return'<td class="c'+(l.orphan?' orph':'')+(l.capped?' cap':'')+'" data-a="'+a.id+'" data-d="'+d+'" data-l="'+id+'">'+l.price+'</td>';
+      }).join('')+'</tr>';
+    });
+  });
+  if(!r.days.length)h='<tr><td style="padding:12px">No apartment has a strategy assigned. Pick one in tab 1.</td></tr>';
+  $('tbl').innerHTML=h;
+}
+$('tbl').onclick=e=>{
+  const t=e.target.closest('td.c');if(!t||!last)return;
+  document.querySelectorAll('td.sel').forEach(x=>x.classList.remove('sel'));t.classList.add('sel');
+  const day=last.days.find(d=>d.apartmentId===t.dataset.a&&d.date===t.dataset.d);
+  const l=day.listings.find(x=>x.id===t.dataset.l);
+  const c=S.aptSettings[day.apartmentId]||{};
+  $('detail').textContent=
+'Date '+day.date+' (lead '+day.lead+'d)  |  limits '+c.min+' to '+c.max+'\n'+
+'Base '+c.base+'\n'+
+Object.keys(day.factors).map(k=>'  '+k+': '+(day.factors[k]>=0?'+':'')+day.factors[k]+'%').join('\n')+'\n'+
+'Sum '+day.sum+'%  x event '+day.eventMult+'  = '+day.mid+'\n'+
+'Listing '+l.id+': spread '+l.spread+'%, orphan -'+l.orphan+'%'+(l.capped?', capped by max-change (last '+l.prev+')':'')+'\n'+
+'Final (after notice floor + min/max) = '+l.price;
+};
+
+// ### 8 --- validate and save (only from the simulator tab)
+function check(){
+  S.events=S.events.filter(e=>e.name||e.from||e.to);
+  for(const a of apts){
+    const c=S.aptSettings[a.id];
+    if(!c.strategyId)continue;
+    if(![c.base,c.min,c.max].every(x=>typeof x==='number'&&x>0))return a.name+': base, min and max are required';
+    if(c.min>c.base||c.base>c.max)return a.name+': need min <= base <= max';
+  }
+  for(const k of Object.keys(S.strategies)){
+    const s=S.strategies[k];
+    for(const f of Object.keys(s.factors)){
+      for(const r of (s.factors[f].tiers||[]))if(typeof r.adj!=='number')return s.name+': every tier in '+f+' needs an Adjust %';
+      for(const r of (s.factors[f].bands||[]))if(!/^\d\d-\d\d$/.test(r.from)||!/^\d\d-\d\d$/.test(r.to)||typeof r.adj!=='number')return s.name+': season rows need dates like 06-15 and an Adjust %';
+    }
+    const mn=s.minNotice;
+    if(mn&&mn.days&&typeof mn.floor!=='number')return s.name+': minimum notice needs a floor price';
+  }
+  for(const e of S.events)if(!e.from||!e.to||e.to<e.from||typeof e.mult!=='number')return 'Each event needs from/to dates (to not before from) and a multiplier';
+  return '';
+}
+$('saveBtn').onclick=async()=>{
+  const err=check();
+  if(err){say('saveMsg',err,'warn');return}
+  S.settings.horizonDays=Number($('hz').value)||60;
+  const rs=await Promise.all([
+    call('setMeta',{key:'pricing_strategies',value:S.strategies}),
+    call('setMeta',{key:'pricing_apartments',value:S.aptSettings}),
+    call('setMeta',{key:'pricing_events',value:S.events}),
+    call('setMeta',{key:'pricing_settings',value:S.settings})]);
+  if(rs.every(r=>r.success)){saved=draft();refreshDirty();say('saveMsg','Saved as active.','ok');renderAll();}
+  else say('saveMsg','Save failed, try again','warn');
+};
+$('discBtn').onclick=async()=>{
+  if(draft()===saved){say('saveMsg','No changes to discard');return}
+  if(!confirm('Throw away all unsaved edits and reload the saved settings?'))return;
+  await init();runSim(false);say('saveMsg','Reloaded saved settings');
+};
+init();
+</script>
+</body>
+</html>

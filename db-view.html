@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DB View</title>
+<style>
+  :root {
+    --bg: #0f1410; --panel: #161d18; --line: #2a352c;
+    --text: #d8e3d8; --dim: #7c8c7c; --accent: #6fbf73; --danger: #d15d5d; --warn: #d98b4a;
+    --mono: 'SF Mono', 'Consolas', 'Menlo', monospace;
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font-family:var(--mono); font-size:13px; padding:16px; }
+  h1 { font-size:15px; letter-spacing:.08em; text-transform:uppercase; color:var(--accent); margin:0 0 4px; }
+  .sub { color:var(--dim); font-size:12px; margin-bottom:12px; }
+  select, input { background:#0c110d; border:1px solid var(--line); color:var(--text); font-family:var(--mono); font-size:12px; padding:6px 8px; border-radius:3px; }
+  button { background:transparent; border:1px solid var(--accent); color:var(--accent); font-family:var(--mono); font-size:12px; padding:6px 12px; border-radius:3px; cursor:pointer; }
+  button:hover { background:rgba(111,191,115,.12); }
+  button:disabled { opacity:.35; cursor:default; }
+  .bar { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-bottom:8px; }
+  #cols { display:none; flex-wrap:wrap; gap:4px; margin-bottom:8px; padding:8px; background:var(--panel); border:1px solid var(--line); border-radius:4px; }
+  #cols.open { display:flex; }
+  .chip { border:1px solid var(--line); border-radius:3px; padding:3px 8px; font-size:11px; cursor:pointer; color:var(--dim); user-select:none; }
+  .chip.on { border-color:var(--accent); color:var(--accent); background:rgba(111,191,115,.12); }
+  .wrap { overflow:auto; max-height:72vh; border:1px solid var(--line); border-radius:4px; }
+  table { border-collapse:collapse; width:max-content; min-width:100%; font-size:12px; }
+  th, td { text-align:left; padding:5px 8px; border-bottom:1px dashed var(--line); white-space:nowrap; max-width:320px; overflow:hidden; text-overflow:ellipsis; }
+  th { position:sticky; top:0; background:#1c2a1f; color:var(--accent); cursor:pointer; z-index:1; border-bottom:1px solid var(--line); }
+  tr:hover td { background:rgba(111,191,115,.06); }
+  #status { color:var(--dim); font-size:11px; }
+</style>
+</head>
+<body>
+<h1>DB View</h1>
+<div class="sub">smoobu-proxy-v2 &middot; read-only view of our database</div>
+
+<div class="bar">
+  <select id="tableSel">
+    <option value="bookings">Bookings</option>
+    <option value="cancelled">Cancelled (archive)</option>
+    <option value="expenses">Expenses</option>
+    <option value="overrides">Date overrides</option>
+    <option value="alerts">Alerts</option>
+    <option value="meta_apartments">Properties (meta)</option>
+  </select>
+  <input type="text" id="filterIn" placeholder="filter rows...">
+  <select id="sizeSel"><option>50</option><option selected>100</option><option>200</option><option>500</option></select>
+  <button id="colsBtn">Columns</button>
+  <button id="reloadBtn">Reload</button>
+  <span id="status"></span>
+</div>
+<div id="cols"></div>
+<div class="wrap"><table><thead id="head"></thead><tbody id="body"></tbody></table></div>
+<div class="bar" style="margin-top:8px;">
+  <button id="prevBtn">&#9664; Prev</button>
+  <span id="pageInfo" class="sub" style="margin:0;"></span>
+  <button id="nextBtn">Next &#9654;</button>
+</div>
+
+<script>
+// ### 1 --- config & state
+const WORKER_URL='https://smoobu-proxy-v2.ulnetconzept.workers.dev';
+let rows=[],cols=[],hidden={},sortKey='',sortDir=1,page=0;
+const tableSel=document.getElementById('tableSel'),filterIn=document.getElementById('filterIn'),sizeSel=document.getElementById('sizeSel'),colsBox=document.getElementById('cols'),head=document.getElementById('head'),body=document.getElementById('body'),statusEl=document.getElementById('status'),pageInfo=document.getElementById('pageInfo'),prevBtn=document.getElementById('prevBtn'),nextBtn=document.getElementById('nextBtn');
+
+// ### 2 --- worker call helper (text/plain avoids CORS preflight)
+function callWorker(action,extra){
+  return fetch(WORKER_URL,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify(Object.assign({action:action},extra||{}))})
+    .then(r=>r.text()).then(t=>{try{return JSON.parse(t);}catch(e){throw new Error('Non-JSON: '+t.slice(0,200));}});
+}
+
+// ### 3 --- flatten a record (JSON-string / object fields such as details become prefixed columns)
+function flat(o,prefix,out){
+  Object.keys(o).forEach(k=>{
+    let v=o[k];
+    if(typeof v==='string'&&(v[0]==='{'||v[0]==='[')){try{v=JSON.parse(v);}catch(e){}}
+    if(v&&typeof v==='object'&&!Array.isArray(v))flat(v,prefix+k+'.',out);
+    else out[prefix+k]=Array.isArray(v)?JSON.stringify(v):v;
+  });
+  return out;
+}
+
+// ### 4 --- loaders per table
+const loaders={
+  bookings:()=>callWorker('getSimBookings').then(r=>r.bookings||[]),
+  cancelled:()=>callWorker('getCancelledBookings').then(r=>(r.cancelled||[]).map(c=>Object.assign({cancelled_at:c.cancelled_at},c.booking))),
+  expenses:()=>callWorker('getExpenses').then(r=>r.expenses||[]),
+  overrides:()=>callWorker('getDateOverrides').then(r=>r.overrides||[]),
+  alerts:()=>callWorker('getAlerts').then(r=>r.alerts||[]),
+  meta_apartments:()=>callWorker('getMeta',{key:'apartments'}).then(r=>(r.value||[]).map(a=>({id:a.id,name:a.name,threshold:a.threshold,listingIds:(a.listingIds||[]).join(', ')})))
+};
+
+// ### 5 --- column visibility (remembered per table)
+function hiddenKey(){return 'dbview-hidden-'+tableSel.value;}
+function loadHidden(){try{hidden=JSON.parse(localStorage.getItem(hiddenKey())||'{}');}catch(e){hidden={};}}
+function saveHidden(){try{localStorage.setItem(hiddenKey(),JSON.stringify(hidden));}catch(e){}}
+function renderCols(){
+  colsBox.innerHTML='';
+  cols.forEach(c=>{
+    const chip=document.createElement('span');chip.className='chip'+(hidden[c]?'':' on');chip.textContent=c;
+    chip.onclick=()=>{hidden[c]=!hidden[c];saveHidden();renderCols();renderTable();};
+    colsBox.appendChild(chip);
+  });
+}
+document.getElementById('colsBtn').onclick=()=>colsBox.classList.toggle('open');
+
+// ### 6 --- render (filter, sort, page)
+function renderTable(){
+  const q=filterIn.value.trim().toLowerCase();
+  let list=q?rows.filter(r=>Object.values(r).some(v=>v!=null&&String(v).toLowerCase().indexOf(q)!==-1)):rows.slice();
+  if(sortKey)list.sort((a,b)=>{
+    const x=a[sortKey],y=b[sortKey];
+    if(x==null&&y==null)return 0;if(x==null)return 1;if(y==null)return -1;
+    const nx=Number(x),ny=Number(y);
+    if(x!==''&&y!==''&&!isNaN(nx)&&!isNaN(ny))return (nx-ny)*sortDir;
+    return String(x).localeCompare(String(y))*sortDir;
+  });
+  const size=parseInt(sizeSel.value,10),pages=Math.max(1,Math.ceil(list.length/size));
+  if(page>=pages)page=pages-1;
+  const vis=cols.filter(c=>!hidden[c]);
+  head.innerHTML='';body.innerHTML='';
+  const hr=document.createElement('tr');
+  vis.forEach(c=>{
+    const th=document.createElement('th');th.textContent=c+(sortKey===c?(sortDir>0?' ▲':' ▼'):'');
+    th.onclick=()=>{if(sortKey===c)sortDir=-sortDir;else{sortKey=c;sortDir=1;}page=0;renderTable();};
+    hr.appendChild(th);
+  });
+  head.appendChild(hr);
+  list.slice(page*size,page*size+size).forEach(r=>{
+    const tr=document.createElement('tr');
+    vis.forEach(c=>{const td=document.createElement('td');const v=r[c];td.textContent=v==null?'':v;td.title=v==null?'':String(v);tr.appendChild(td);});
+    body.appendChild(tr);
+  });
+  pageInfo.textContent=list.length?('rows '+(page*size+1)+'-'+Math.min(list.length,page*size+size)+' of '+list.length+(q?' (filtered from '+rows.length+')':'')+' · page '+(page+1)+'/'+pages):'no rows';
+  prevBtn.disabled=page<=0;nextBtn.disabled=page>=pages-1;
+}
+prevBtn.onclick=()=>{page--;renderTable();};
+nextBtn.onclick=()=>{page++;renderTable();};
+filterIn.oninput=()=>{page=0;renderTable();};
+sizeSel.onchange=()=>{page=0;renderTable();};
+
+// ### 7 --- load a table
+function load(){
+  statusEl.textContent='Loading...';
+  loadHidden();sortKey='';page=0;
+  loaders[tableSel.value]().then(list=>{
+    rows=list.map(r=>flat(r,'',{}));
+    const seen=[];
+    rows.forEach(r=>Object.keys(r).forEach(k=>{if(seen.indexOf(k)===-1)seen.push(k);}));
+    cols=seen;
+    statusEl.textContent='';
+    renderCols();renderTable();
+  }).catch(e=>{statusEl.textContent='Load failed: '+e.message;});
+}
+tableSel.onchange=load;
+document.getElementById('reloadBtn').onclick=load;
+
+// ### 8 --- init
+load();
+</script>
+</body>
+</html>

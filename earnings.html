@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Earnings</title>
+<style>
+  :root {
+    --bg: #0f1410; --panel: #161d18; --line: #2a352c;
+    --text: #d8e3d8; --dim: #7c8c7c; --accent: #6fbf73; --danger: #d15d5d; --warn: #d98b4a;
+    --mono: 'SF Mono', 'Consolas', 'Menlo', monospace;
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font-family:var(--mono); font-size:14px; padding:16px; }
+  h1 { font-size:15px; letter-spacing:.08em; text-transform:uppercase; color:var(--accent); margin:0 0 4px; }
+  .sub { color:var(--dim); font-size:12px; margin-bottom:16px; }
+  section { background:var(--panel); border:1px solid var(--line); border-radius:4px; margin-bottom:12px; }
+  .section-head { padding:8px 12px; font-size:11px; letter-spacing:.06em; text-transform:uppercase; color:var(--dim); border-bottom:1px solid var(--line); }
+  .section-body { padding:10px 12px; }
+  label { display:flex; flex-direction:column; font-size:10px; color:var(--dim); gap:3px; }
+  input, select { background:#0c110d; border:1px solid var(--line); color:var(--text); font-family:var(--mono); font-size:13px; padding:7px 8px; border-radius:3px; }
+  input[type="month"], input[type="date"] { color-scheme:dark; }
+  .field-row { display:flex; flex-wrap:wrap; gap:10px; align-items:flex-end; }
+  button { background:transparent; border:1px solid var(--accent); color:var(--accent); font-family:var(--mono); font-size:12px; padding:8px 14px; border-radius:3px; cursor:pointer; margin-top:8px; }
+  button.danger { border-color:var(--danger); color:var(--danger); }
+  .statGrid { display:flex; flex-wrap:wrap; gap:10px; }
+  .stat { flex:1; min-width:120px; border:1px solid var(--line); border-radius:4px; padding:8px 10px; }
+  .stat .lbl { font-size:10px; color:var(--dim); text-transform:uppercase; }
+  .stat .val { font-size:18px; font-weight:bold; margin-top:4px; }
+  .stat.profit .val.neg { color:var(--danger); }
+  .stat.profit .val.pos { color:var(--accent); }
+  .chart { display:flex; align-items:flex-end; gap:2px; height:100px; border-bottom:1px solid var(--line); margin-top:10px; }
+  .chart .bar { flex:1; background:var(--accent); min-height:1px; border-radius:1px 1px 0 0; }
+  .chart .bar.today { background:var(--warn); }
+  .axis { display:flex; gap:2px; margin-top:2px; }
+  .axis span { flex:1; font-size:8px; color:var(--dim); text-align:center; overflow:visible; white-space:nowrap; }
+  table { width:100%; border-collapse:collapse; font-size:12px; margin-top:8px; }
+  th, td { text-align:left; padding:5px; border-bottom:1px dashed var(--line); }
+  .status { font-size:11px; color:var(--danger); min-height:14px; margin-top:6px; }
+</style>
+</head>
+<body>
+<h1>Earnings</h1>
+<div class="sub">smoobu-proxy-v2 &middot; host earning (price - commission) per real Smoobu booking, allocated per night</div>
+
+<section>
+  <div class="section-body field-row">
+    <label>Month<input type="month" id="monthInput"></label>
+    <button id="loadBtn">Load</button>
+  </div>
+  <div class="section-body status" id="status"></div>
+</section>
+
+<section>
+  <div class="section-head">Summary</div>
+  <div class="section-body">
+    <div class="statGrid">
+      <div class="stat"><div class="lbl">Earnings (full month)</div><div class="val" id="statEarnFull">-</div></div>
+      <div class="stat"><div class="lbl">Earnings (month-to-date)</div><div class="val" id="statEarnMtd">-</div></div>
+      <div class="stat"><div class="lbl">Avg nightly rate</div><div class="val" id="statAvg">-</div></div>
+      <div class="stat"><div class="lbl">Expenses (full month)</div><div class="val" id="statExp">-</div></div>
+      <div class="stat profit"><div class="lbl">Profit (full month)</div><div class="val" id="statProfit">-</div></div>
+      <div class="stat profit"><div class="lbl">Profit (month-to-date)</div><div class="val" id="statProfitMtd">-</div></div>
+    </div>
+    <div class="chart" id="chart"></div>
+    <div class="axis" id="chartAxis"></div>
+  </div>
+</section>
+
+<section>
+  <div class="section-head">By property</div>
+  <div class="section-body">
+    <table><thead><tr><th>Property</th><th>Nights sold</th><th>Earnings</th><th>Avg/night</th></tr></thead><tbody id="propBody"></tbody></table>
+  </div>
+</section>
+
+<section>
+  <div class="section-head">Expenses</div>
+  <div class="section-body">
+    <div class="field-row">
+      <label>Date<input type="date" id="expDate"></label>
+      <label>Description<input type="text" id="expDesc" placeholder="e.g. cleaning"></label>
+      <label>Amount<input type="number" id="expAmount" placeholder="0.00"></label>
+      <button id="addExpBtn">Add expense</button>
+    </div>
+    <table><thead><tr><th>Date</th><th>Description</th><th>Amount</th><th></th></tr></thead><tbody id="expBody"></tbody></table>
+  </div>
+</section>
+
+<script>
+// ### 1 --- config & state
+const WORKER_URL='https://smoobu-proxy-v2.ulnetconzept.workers.dev';
+let properties=[],expenses=[],bookings=[];
+const monthInput=document.getElementById('monthInput'),loadBtn=document.getElementById('loadBtn'),status=document.getElementById('status'),chart=document.getElementById('chart'),propBody=document.getElementById('propBody'),expBody=document.getElementById('expBody'),expDate=document.getElementById('expDate'),expDesc=document.getElementById('expDesc'),expAmount=document.getElementById('expAmount'),addExpBtn=document.getElementById('addExpBtn');
+
+// ### 2 --- worker call helper
+function callWorker(action,extra){
+  return fetch(WORKER_URL,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify(Object.assign({action:action},extra||{}))})
+    .then(r=>r.text()).then(t=>{try{return JSON.parse(t);}catch(e){throw new Error('Non-JSON: '+t.slice(0,200));}});
+}
+
+// ### 3 --- date helpers
+function toISO(d){return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');}
+function dateObj(s){const p=s.split('-');return new Date(+p[0],p[1]-1,+p[2]);}
+function fmtMoney(n){return '\u00a3'+n.toFixed(2);}
+function resolveProperty(listingId){return properties.find(p=>(p.listingIds||[]).includes(String(listingId)));}
+
+// ### 4 --- nights of a booking that fall within [rangeStart, rangeEndExclusive)
+function nightsInRange(arrival,departure,rangeStart,rangeEndExclusive){
+  const start=new Date(Math.max(dateObj(arrival),dateObj(rangeStart)));
+  const end=new Date(Math.min(dateObj(departure),dateObj(rangeEndExclusive)));
+  const nights=[];
+  for(let d=new Date(start);d<end;d.setDate(d.getDate()+1))nights.push(toISO(d));
+  return nights;
+}
+
+// ### 5 --- load month
+function loadMonth(){
+  status.textContent='';
+  const val=monthInput.value;
+  if(!val)return;
+  const monthStart=val+'-01';
+  const msDate=dateObj(monthStart);
+  const monthEndDate=new Date(msDate.getFullYear(),msDate.getMonth()+1,1);
+  const monthEnd=toISO(monthEndDate);
+  const today=new Date();today.setHours(0,0,0,0);
+  const todayIso=toISO(today);
+  const mtdEndDate=todayIso<monthEnd?new Date(dateObj(todayIso).getTime()+86400000):monthEndDate;
+
+  status.textContent='Loading...';
+  Promise.all([
+    callWorker('getMeta',{key:'apartments'}).then(res=>res.value||[]),
+    callWorker('getBookings',{params:{from:monthStart,to:monthEnd}}).then(res=>(res.body&&res.body.bookings)||[]),
+    callWorker('getExpenses').then(res=>res.expenses||[])
+  ]).then(([props,bks,exps])=>{
+    properties=props;bookings=bks;expenses=exps;
+    render(monthStart,monthEnd,mtdEndDate,todayIso);
+    status.textContent='';
+  }).catch(err=>status.textContent='Load failed: '+err.message);
+}
+loadBtn.onclick=loadMonth;
+
+// ### 6 --- render everything for the loaded month
+function render(monthStart,monthEnd,mtdEndDate,todayIso){
+  const mtdEnd=toISO(mtdEndDate);
+  let earnFull=0,earnMtd=0,nightsFull=0;
+  const dayTotals={};
+  const propTotals={};
+
+  bookings.forEach(b=>{
+    if(!b.apartment||!b.price)return;
+    const totalNights=Math.round((new Date(b.departure)-new Date(b.arrival))/86400000);
+    if(totalNights<=0)return;
+    const earn=Math.max(0,(Number(b.price)||0)-(Number(b['commission-included'])||0));
+    const perNight=earn/totalNights;
+    const monthNights=nightsInRange(b.arrival,b.departure,monthStart,monthEnd);
+    const mtdNights=nightsInRange(b.arrival,b.departure,monthStart,mtdEnd);
+    const monthEarn=perNight*monthNights.length;
+    earnFull+=monthEarn;
+    earnMtd+=perNight*mtdNights.length;
+    nightsFull+=monthNights.length;
+    monthNights.forEach(ds=>{dayTotals[ds]=(dayTotals[ds]||0)+perNight;});
+    const prop=resolveProperty(b.apartment.id);
+    const key=prop?prop.name:'(unassigned)';
+    if(!propTotals[key])propTotals[key]={nights:0,earn:0};
+    propTotals[key].nights+=monthNights.length;
+    propTotals[key].earn+=monthEarn;
+  });
+
+  const monthExpenses=expenses.filter(e=>e.date>=monthStart&&e.date<monthEnd).reduce((s,e)=>s+e.amount,0);
+  const mtdExpenses=expenses.filter(e=>e.date>=monthStart&&e.date<mtdEnd).reduce((s,e)=>s+e.amount,0);
+
+  document.getElementById('statEarnFull').textContent=fmtMoney(earnFull);
+  document.getElementById('statEarnMtd').textContent=fmtMoney(earnMtd);
+  document.getElementById('statAvg').textContent=nightsFull?fmtMoney(earnFull/nightsFull):'-';
+  document.getElementById('statExp').textContent=fmtMoney(monthExpenses);
+  const profitFull=earnFull-monthExpenses,profitMtd=earnMtd-mtdExpenses;
+  const pf=document.getElementById('statProfit');pf.textContent=fmtMoney(profitFull);pf.className='val '+(profitFull<0?'neg':'pos');
+  const pm=document.getElementById('statProfitMtd');pm.textContent=fmtMoney(profitMtd);pm.className='val '+(profitMtd<0?'neg':'pos');
+
+  // ### 6b --- daily chart
+  chart.innerHTML='';
+  const axis=document.getElementById('chartAxis');axis.innerHTML='';
+  const maxVal=Math.max(1,...Object.values(dayTotals));
+  for(let d=dateObj(monthStart);d<dateObj(monthEnd);d.setDate(d.getDate()+1)){
+    const ds=toISO(d);
+    const bar=document.createElement('div');
+    bar.className='bar'+(ds===todayIso?' today':'');
+    bar.style.height=Math.max(1,Math.round((dayTotals[ds]||0)/maxVal*100))+'%';
+    bar.title=ds+': '+fmtMoney(dayTotals[ds]||0);
+    chart.appendChild(bar);
+    const lb=document.createElement('span');lb.textContent=d.getDate();axis.appendChild(lb);
+  }
+
+  // ### 6c --- by-property table
+  propBody.innerHTML='';
+  Object.keys(propTotals).forEach(name=>{
+    const t=propTotals[name];
+    const tr=document.createElement('tr');
+    tr.innerHTML=`<td>${name}</td><td>${t.nights}</td><td>${fmtMoney(t.earn)}</td><td>${t.nights?fmtMoney(t.earn/t.nights):'-'}</td>`;
+    propBody.appendChild(tr);
+  });
+
+  renderExpenses(monthStart,monthEnd);
+}
+
+// ### 7 --- expenses list (filtered to loaded month) + add/delete
+function renderExpenses(monthStart,monthEnd){
+  expBody.innerHTML='';
+  expenses.filter(e=>e.date>=monthStart&&e.date<monthEnd).forEach(e=>{
+    const tr=document.createElement('tr');
+    tr.innerHTML=`<td>${e.date}</td><td>${e.description||''}</td><td>${fmtMoney(e.amount)}</td><td></td>`;
+    const del=document.createElement('button');del.className='danger';del.textContent='x';
+    del.onclick=()=>{callWorker('deleteExpense',{id:e.id}).then(loadMonth);};
+    tr.children[3].appendChild(del);
+    expBody.appendChild(tr);
+  });
+}
+addExpBtn.onclick=()=>{
+  const date=expDate.value,desc=expDesc.value.trim(),amount=expAmount.value;
+  if(!date||!amount)return;
+  callWorker('addExpense',{date,description:desc,amount}).then(()=>{
+    expDate.value='';expDesc.value='';expAmount.value='';
+    loadMonth();
+  });
+};
+
+// ### 8 --- init: current month
+(function(){
+  const now=new Date();
+  monthInput.value=now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0');
+  expDate.value=toISO(now);
+  loadMonth();
+})();
+</script>
+</body>
+</html>

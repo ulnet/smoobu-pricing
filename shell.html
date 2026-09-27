@@ -1,0 +1,435 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Smoobu Console</title>
+<style>
+  :root {
+    --bg: #0f1410;
+    --panel: #161d17;
+    --border: #26332a;
+    --text: #d9e6dc;
+    --muted: #7c9182;
+    --accent: #6fbf73;
+    --danger: #c7684f;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    background: var(--bg); color: var(--text);
+    font-family: ui-monospace, "SF Mono", Consolas, monospace;
+    font-size: 14px;
+  }
+  button, input, select {
+    font-family: inherit; font-size: inherit;
+  }
+
+  /* ---- login ---- */
+  #login-view {
+    display: none;
+    position: fixed; inset: 0; z-index: 50;
+    background: rgba(0,0,0,0.6);
+    align-items: center; justify-content: center;
+  }
+  #login-card {
+    width: 260px;
+    padding: 24px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+  }
+  #login-card h1 {
+    margin: 0 0 16px; font-size: 15px; font-weight: 600; color: var(--accent);
+  }
+  #login-card input {
+    width: 100%; padding: 8px; margin-bottom: 10px;
+    background: var(--bg); border: 1px solid var(--border); color: var(--text);
+    border-radius: 3px;
+  }
+  #login-card button {
+    width: 100%; padding: 8px;
+    background: var(--accent); color: #0f1410; border: none;
+    border-radius: 3px; font-weight: 600; cursor: pointer;
+  }
+  #login-error { color: var(--danger); font-size: 12px; margin-bottom: 10px; min-height: 14px; }
+
+  /* ---- main shell ---- */
+  #main-view { display: none; height: 100%; flex-direction: column; }
+  #topbar {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 8px 12px;
+    background: var(--panel); border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  #topbar .brand { color: var(--accent); font-weight: 600; }
+  #topbar .right { display: flex; gap: 8px; align-items: center; }
+  #menu-select {
+    background: var(--bg); color: var(--text); border: 1px solid var(--border);
+    border-radius: 3px; padding: 6px; min-width: 160px;
+  }
+  .icon-btn {
+    background: none; border: 1px solid var(--border); color: var(--muted);
+    border-radius: 3px; padding: 6px 10px; cursor: pointer;
+  }
+  .icon-btn:hover { color: var(--text); border-color: var(--accent); }
+  #frame { flex: 1; border: none; width: 100%; background: #fff; }
+
+  /* ---- admin panel ---- */
+  #admin-view {
+    display: none; height: 100%; overflow-y: auto; padding: 20px;
+  }
+  #admin-view h2 { color: var(--accent); font-size: 14px; margin: 20px 0 10px; }
+  #admin-view h2:first-child { margin-top: 0; }
+  .row { display: flex; gap: 8px; margin-bottom: 8px; }
+  .row input, .row select, .row textarea {
+    background: var(--panel); border: 1px solid var(--border); color: var(--text);
+    border-radius: 3px; padding: 6px;
+  }
+  .row input[type=text] { flex: 1; }
+  table { width: 100%; border-collapse: collapse; margin-bottom: 16px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); font-size: 13px; }
+  th { color: var(--muted); font-weight: 500; }
+  td button { background: none; border: 1px solid var(--border); color: var(--muted); border-radius: 3px; padding: 3px 8px; cursor: pointer; margin-right: 4px; }
+  td button:hover { color: var(--text); }
+  td button.danger:hover { color: var(--danger); border-color: var(--danger); }
+  textarea { width: 100%; min-height: 160px; font-family: monospace; }
+  .save-btn { background: var(--accent); color: #0f1410; border: none; border-radius: 3px; padding: 8px 14px; font-weight: 600; cursor: pointer; }
+  .status { font-size: 12px; color: var(--muted); margin-left: 8px; }
+</style>
+</head>
+<body>
+
+<div id="login-view">
+  <div id="login-card">
+    <h1>Settings login</h1>
+    <div id="login-error"></div>
+    <input id="password" type="password" placeholder="Password" autofocus>
+    <button id="login-btn">Enter</button>
+    <div style="text-align:center; margin-top:10px;">
+      <a href="#" id="login-cancel" style="color:var(--muted); font-size:12px;">Cancel</a>
+    </div>
+  </div>
+</div>
+
+<div id="main-view">
+  <div id="topbar">
+    <span class="brand">Smoobu Console</span>
+    <select id="menu-select"></select>
+  </div>
+  <iframe id="frame"></iframe>
+</div>
+
+<div id="admin-view">
+  <div class="row" style="justify-content:space-between; margin-bottom:16px;">
+    <button class="icon-btn" id="back-btn">&larr; Back to console</button>
+    <button class="icon-btn" id="logout-btn">Log out</button>
+  </div>
+
+  <h2>Menu items</h2>
+  <table id="menu-table">
+    <thead><tr><th>Label</th><th>Type</th><th>Target</th><th>Order</th><th></th></tr></thead>
+    <tbody></tbody>
+  </table>
+  <div class="row">
+    <input type="text" id="mi-label" placeholder="Label">
+    <select id="mi-type">
+      <option value="iframe_url">iframe_url (link to existing page)</option>
+      <option value="custom_html">custom_html (paste HTML below)</option>
+    </select>
+    <input type="text" id="mi-order" placeholder="order" style="width:60px">
+  </div>
+  <div class="row" id="mi-target-row">
+    <input type="text" id="mi-target" placeholder="Full URL (https://...)" style="flex:1">
+  </div>
+  <div class="row" id="mi-file-row" style="display:none">
+    <input type="file" id="mi-file" accept=".html,text/html" style="flex:1">
+  </div>
+  <textarea id="mi-html" placeholder="&lt;html&gt;...&lt;/html&gt;" style="display:none"></textarea>
+  <div class="row" style="margin-top:8px">
+    <button class="save-btn" id="mi-add">Add</button>
+    <a href="#" id="mi-cancel-edit" style="display:none; color:var(--muted); font-size:12px; align-self:center;">Cancel edit</a>
+    <span class="status" id="mi-status"></span>
+  </div>
+
+  <h2>Saved custom pages</h2>
+  <table id="pages-table">
+    <thead><tr><th>Slug</th><th>Title</th><th>Updated</th><th></th></tr></thead>
+    <tbody></tbody>
+  </table>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+
+const API_BASE = "https://smoobu-console.ulnetconzept.workers.dev";
+
+async function api(path, opts = {}) {
+  const token = localStorage.getItem("console_token");
+  const headers = { ...(opts.headers || {}) };
+  if (token) headers["Authorization"] = "Bearer " + token;
+  const res = await fetch(API_BASE + path, { ...opts, headers });
+  let data = null;
+  try { data = await res.json(); } catch {}
+  return { ok: res.ok, status: res.status, data };
+}
+
+// ---- auth ----
+async function checkAuth() {
+  if (!localStorage.getItem("console_token")) return false;
+  const { data } = await api("/api/check");
+  return data && data.authed;
+}
+
+async function login() {
+  $("login-error").textContent = "";
+  const password = $("password").value;
+  const { ok, data } = await api("/api/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ password }),
+  });
+  if (ok && data && data.ok) {
+    localStorage.setItem("console_token", data.token);
+    hideLoginModal();
+    await showAdmin();
+  } else {
+    $("login-error").textContent = "Wrong password";
+  }
+}
+
+async function logout() {
+  await api("/api/logout", { method: "POST" });
+  localStorage.removeItem("console_token");
+  showMain();
+}
+
+$("login-btn").addEventListener("click", login);
+$("password").addEventListener("keydown", (e) => { if (e.key === "Enter") login(); });
+$("login-cancel").addEventListener("click", (e) => {
+  e.preventDefault();
+  hideLoginModal();
+  $("menu-select").value = currentTarget || "";
+});
+$("logout-btn").addEventListener("click", logout);
+
+// ---- main view / menu ----
+let currentTarget = null; // last real (non-admin) selection, so we can revert to it
+
+function showLoginModal() {
+  $("login-error").textContent = "";
+  $("password").value = "";
+  $("login-view").style.display = "flex";
+}
+function hideLoginModal() {
+  $("login-view").style.display = "none";
+}
+
+async function showMain() {
+  $("main-view").style.display = "flex";
+  $("admin-view").style.display = "none";
+  $("menu-select").value = currentTarget || "";
+}
+
+async function showAdmin() {
+  $("main-view").style.display = "none";
+  $("admin-view").style.display = "block";
+  await loadAdminMenu();
+  await loadAdminPages();
+}
+
+async function loadMenu() {
+  const { data } = await api("/api/menu");
+  const select = $("menu-select");
+  select.innerHTML = "";
+
+  const appsGroup = document.createElement("optgroup");
+  appsGroup.label = "Apps";
+  (data || []).forEach((item) => {
+    const opt = document.createElement("option");
+    opt.value = item.type === "custom_html" ? API_BASE + "/page/" + item.target : item.target;
+    opt.textContent = item.label;
+    appsGroup.appendChild(opt);
+  });
+  select.appendChild(appsGroup);
+
+  const adminGroup = document.createElement("optgroup");
+  adminGroup.label = "Admin";
+  const adminOpt = document.createElement("option");
+  adminOpt.value = "__admin__";
+  adminOpt.textContent = "Admin";
+  adminGroup.appendChild(adminOpt);
+  select.appendChild(adminGroup);
+
+  // default: last one opened, else the first real app
+  const remembered = localStorage.getItem("last_target");
+  const hasRemembered = remembered && [...appsGroup.children].some((o) => o.value === remembered);
+  const firstApp = appsGroup.children[0];
+  currentTarget = hasRemembered ? remembered : (firstApp ? firstApp.value : null);
+
+  if (currentTarget) {
+    select.value = currentTarget;
+    $("frame").src = currentTarget;
+  }
+
+  select.onchange = async () => {
+    const value = select.value;
+    if (value === "__admin__") {
+      if (await checkAuth()) {
+        await showAdmin();
+      } else {
+        showLoginModal();
+      }
+      return;
+    }
+    currentTarget = value;
+    localStorage.setItem("last_target", value);
+    $("frame").src = value;
+  };
+}
+
+$("back-btn").addEventListener("click", async () => {
+  await loadMenu();
+  await showMain();
+});
+
+async function loadAdminMenu() {
+  const { data } = await api("/api/menu");
+  const tbody = document.querySelector("#menu-table tbody");
+  tbody.innerHTML = "";
+  (data || []).forEach((item) => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td>${item.label}</td><td>${item.type}</td><td>${item.target}</td><td>${item.sort_order}</td><td><button class="edit-btn">Edit</button> <button class="danger">Delete</button></td>`;
+    const [editBtn, deleteBtn] = tr.querySelectorAll("button");
+    deleteBtn.addEventListener("click", async () => {
+      await api("/api/menu/" + item.id, { method: "DELETE" });
+      loadAdminMenu();
+    });
+    editBtn.addEventListener("click", async () => { await startEdit(item); });
+    tbody.appendChild(tr);
+  });
+}
+
+function slugify(text) {
+  return text.toLowerCase().trim()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "") || "page-" + Date.now();
+}
+
+let editingId = null;
+let editingSlug = null; // keeps the original slug stable across renames
+
+function setFormMode(isCustom) {
+  $("mi-target-row").style.display = isCustom ? "none" : "flex";
+  $("mi-file-row").style.display = isCustom ? "flex" : "none";
+  $("mi-html").style.display = isCustom ? "block" : "none";
+}
+
+$("mi-type").addEventListener("change", () => {
+  setFormMode($("mi-type").value === "custom_html");
+});
+
+$("mi-file").addEventListener("change", (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => { $("mi-html").value = reader.result; };
+  reader.readAsText(file);
+});
+
+function resetForm() {
+  editingId = null;
+  editingSlug = null;
+  $("mi-label").value = ""; $("mi-target").value = ""; $("mi-order").value = "";
+  $("mi-html").value = ""; $("mi-file").value = "";
+  $("mi-add").textContent = "Add";
+  $("mi-cancel-edit").style.display = "none";
+}
+
+$("mi-cancel-edit").addEventListener("click", (e) => { e.preventDefault(); resetForm(); });
+
+async function startEdit(item) {
+  editingId = item.id;
+  $("mi-label").value = item.label;
+  $("mi-type").value = item.type;
+  $("mi-order").value = item.sort_order;
+  $("mi-add").textContent = "Save changes";
+  $("mi-cancel-edit").style.display = "inline";
+
+  const isCustom = item.type === "custom_html";
+  setFormMode(isCustom);
+
+  if (isCustom) {
+    editingSlug = item.target;
+    const res = await fetch(API_BASE + "/page/" + item.target);
+    $("mi-html").value = res.ok ? await res.text() : "";
+  } else {
+    $("mi-target").value = item.target;
+  }
+}
+
+$("mi-add").addEventListener("click", async () => {
+  $("mi-status").textContent = "";
+  const label = $("mi-label").value.trim();
+  const type = $("mi-type").value;
+  const sort_order = parseInt($("mi-order").value || "0", 10);
+  if (!label) { $("mi-status").textContent = "Label is required"; return; }
+
+  let target;
+  if (type === "custom_html") {
+    const html_content = $("mi-html").value;
+    if (!html_content.trim()) { $("mi-status").textContent = "Paste or upload some HTML first"; return; }
+    const slug = editingSlug || slugify(label);
+    const { ok: pageOk } = await api("/api/pages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ slug, title: label, html_content }),
+    });
+    if (!pageOk) { $("mi-status").textContent = "Failed to save the page"; return; }
+    target = slug;
+  } else {
+    target = $("mi-target").value.trim();
+    if (!target) { $("mi-status").textContent = "URL is required"; return; }
+  }
+
+  const { ok } = editingId
+    ? await api("/api/menu/" + editingId, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ label, type, target, sort_order }),
+      })
+    : await api("/api/menu", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ label, type, target, sort_order }),
+      });
+  $("mi-status").textContent = ok ? (editingId ? "Saved" : "Added") : "Failed to save";
+
+  resetForm();
+  loadAdminMenu();
+  loadAdminPages();
+});
+
+async function loadAdminPages() {
+  const { data } = await api("/api/pages");
+  const tbody = document.querySelector("#pages-table tbody");
+  tbody.innerHTML = "";
+  (data || []).forEach((p) => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td>${p.slug}</td><td>${p.title}</td><td>${p.updated_at}</td><td><button class="danger" data-id="${p.id}">Delete</button></td>`;
+    tr.querySelector("button").addEventListener("click", async () => {
+      await api("/api/pages/" + p.id, { method: "DELETE" });
+      loadAdminPages();
+    });
+    tbody.appendChild(tr);
+  });
+}
+
+// ---- init ----
+(async function init() {
+  await loadMenu();
+  await showMain();
+})();
+</script>
+</body>
+</html>

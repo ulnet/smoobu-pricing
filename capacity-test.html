@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Capacity Test</title>
+<style>
+body{font-family:sans-serif;margin:20px}
+label{display:block;margin-top:8px;font-size:12px;color:#666}
+input{width:100%;padding:6px;box-sizing:border-box}
+button{margin-top:12px;padding:8px 14px}
+table{border-collapse:collapse;margin-top:14px;width:100%}
+td,th{border:1px solid #ccc;padding:4px 6px;font-size:12px;text-align:left}
+.hit{background:#f8d7da}
+.nohit{background:#d4edda}
+.skip{background:#eee;color:#888}
+</style>
+</head>
+<body>
+<h2>Capacity Test — simulate bookings one at a time</h2>
+<label>Listing ID<input id="listingId" value="3037471"></label>
+<label>Guest name<input id="guestName" value="Test Guest"></label>
+<label>Arrival<input id="arrival" type="date"></label>
+<label>Departure<input id="departure" type="date"></label>
+<button id="runBtn">+ Simulate booking</button>
+<table id="logTable"><thead><tr><th>Guest</th><th>Dates</th><th>Result</th></tr></thead><tbody id="logBody"></tbody></table>
+
+<script>
+// ### 1 --- config
+const WORKER_URL='https://smoobu-proxy-v2.ulnetconzept.workers.dev';
+const listingId=document.getElementById('listingId'),arrival=document.getElementById('arrival'),departure=document.getElementById('departure'),guestName=document.getElementById('guestName'),runBtn=document.getElementById('runBtn'),logBody=document.getElementById('logBody');
+
+// ### 2 --- default dates + bump helper (so repeated clicks don't reuse the same range)
+function toISO(d){return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');}
+function fromISO(s){return new Date(s+'T00:00:00');}
+const today=new Date();arrival.value=toISO(today);
+const dep=new Date(today);dep.setDate(dep.getDate()+2);departure.value=toISO(dep);
+
+// ### 3 --- worker call helper
+function callWorker(action,extra){
+  return fetch(WORKER_URL,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(Object.assign({action:action},extra||{}))}).then(r=>r.json());
+}
+
+// ### 4 --- simulate: add a real sim_booking, then run the same capacity decision the webhook would
+runBtn.onclick=()=>{
+  const a=arrival.value,d=departure.value,name=guestName.value.trim();
+  if(!a||!d||a>=d)return;
+  callWorker('addSimBooking',{
+    guest_name:name,apartment_id:listingId.value.trim(),apartment_name:'',
+    channel:'Test',arrival:a,departure:d
+  }).then(()=>callWorker('testCapacityCheck',{
+    data:{apartment:{id:listingId.value.trim()},arrival:a,departure:d,'guest-name':name,'is-blocked-booking':false}
+  })).then(res=>{
+    const tr=document.createElement('tr');
+    tr.className=res.skipped?'skip':(res.hit?'hit':'nohit');
+    const status=res.skipped?('Skipped — '+res.reason):
+      (res.error?('Error — '+res.error):
+      (res.hit?('HIT — '+res.count+'/'+res.threshold+' ('+res.property+')'):
+      ('ok — '+res.count+'/'+res.threshold+' ('+(res.property||res.reason)+')')));
+    tr.innerHTML=`<td>${name}</td><td>${a} \u2192 ${d}</td><td>${status}</td>`;
+    logBody.prepend(tr);
+  });
+  // bump the date range forward by one day each click so repeated tests build up overlap gradually
+  arrival.value=toISO(fromISO(a));
+  const nd=new Date(fromISO(d));nd.setDate(nd.getDate()+1);departure.value=toISO(nd);
+};
+</script>
+</body>
+</html>

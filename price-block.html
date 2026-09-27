@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Price / Block</title>
+<style>
+  :root {
+    --bg: #0f1410; --panel: #161d18; --line: #2a352c;
+    --text: #d8e3d8; --dim: #7c8c7c; --accent: #6fbf73; --danger: #d15d5d; --warn: #d98b4a;
+    --mono: 'SF Mono', 'Consolas', 'Menlo', monospace;
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font-family:var(--mono); font-size:14px; padding:16px; }
+  h1 { font-size:15px; letter-spacing:.08em; text-transform:uppercase; color:var(--accent); margin:0 0 4px; }
+  .sub { color:var(--dim); font-size:12px; margin-bottom:16px; }
+  section { background:var(--panel); border:1px solid var(--line); border-radius:4px; margin-bottom:12px; }
+  .section-head { padding:8px 12px; font-size:11px; letter-spacing:.06em; text-transform:uppercase; color:var(--dim); border-bottom:1px solid var(--line); }
+  .section-body { padding:10px 12px; }
+  label { display:flex; flex-direction:column; font-size:10px; color:var(--dim); gap:3px; }
+  input, select { background:#0c110d; border:1px solid var(--line); color:var(--text); font-family:var(--mono); font-size:13px; padding:7px 8px; border-radius:3px; }
+  input[type="date"] { color-scheme:dark; width:130px; }
+  input[type="number"] { width:100px; }
+  .field-row { display:flex; flex-wrap:wrap; gap:10px; align-items:flex-end; }
+  button { background:transparent; border:1px solid var(--accent); color:var(--accent); font-family:var(--mono); font-size:12px; padding:8px 14px; border-radius:3px; cursor:pointer; margin-top:8px; }
+  button:hover { background:rgba(111,191,115,.12); }
+  button.warn { border-color:var(--warn); color:var(--warn); }
+  button.mini { font-size:11px; padding:4px 10px; margin:0 0 0 8px; }
+  .propGroup { margin-bottom:10px; }
+  .propGroupHead { display:flex; justify-content:space-between; align-items:center; font-size:11px; color:var(--dim); margin-bottom:4px; }
+  .apt-chip { border:1px solid var(--line); border-radius:3px; padding:6px 10px; font-size:12px; cursor:pointer; display:inline-block; margin:3px; }
+  .apt-chip.selected { border-color:var(--accent); color:var(--accent); background:rgba(111,191,115,.12); }
+  .radio-group { display:flex; gap:14px; margin-bottom:10px; flex-wrap:wrap; }
+  .radio-opt { display:flex; align-items:center; gap:6px; font-size:12px; color:var(--dim); cursor:pointer; }
+  .radio-opt.active { color:var(--accent); }
+  .type-panel { display:none; }
+  .type-panel.active { display:block; }
+  table { width:100%; border-collapse:collapse; font-size:12px; margin-top:8px; }
+  th, td { text-align:left; padding:5px; border-bottom:1px dashed var(--line); }
+  #log { max-height:32vh; overflow-y:auto; background:#090c0a; font-size:11px; padding:8px; }
+  .entry { padding:6px 0; border-bottom:1px dashed var(--line); }
+  .entry .meta.ok { color:var(--accent); } .entry .meta.err { color:var(--danger); }
+  pre { margin:0; white-space:pre-wrap; word-break:break-word; }
+  .tabs { display:flex; gap:6px; margin-bottom:12px; }
+  .tab { flex:1; text-align:center; padding:9px 0; margin:0; border-radius:3px; }
+  .tab.active { background:rgba(111,191,115,.18); font-weight:bold; }
+  .tabPanel { display:none; }
+  .tabPanel.active { display:block; }
+</style>
+</head>
+<body>
+<h1>Price / Block</h1>
+<div class="sub">smoobu-proxy-v2 &middot; grouped by property</div>
+
+<section>
+  <div class="section-head">Listings</div>
+  <div class="section-body">
+    <div class="sub">Price Setter: tick listings to price only those (none ticked = all). Block Dates: at least one must be ticked.</div>
+    <div id="aptGroups"><span style="color:var(--dim)">Tap refresh to load.</span></div>
+    <button id="refreshBtn">refresh listings</button>
+  </div>
+</section>
+
+<!-- ============ PRICE SETTER ============ -->
+<div class="tabs">
+  <button class="tab active" data-tab="tab-price">Price Setter</button>
+  <button class="tab" data-tab="tab-block">Block Dates</button>
+</div>
+
+<div class="tabPanel active" id="tab-price">
+<section>
+  <div class="section-head">Price Setter</div>
+  <div class="section-body">
+    <div class="field-row">
+      <label>From<input type="date" id="pr-from"></label>
+      <label>To (last night)<input type="date" id="pr-to"></label>
+      <label>Nights<input type="number" id="pr-nights" min="1" value="1"></label>
+      <button id="pr-addRangeBtn">Add range</button>
+    </div>
+    <table><thead><tr><th>From</th><th>To</th><th></th></tr></thead><tbody id="pr-rangeBody"></tbody></table>
+    <div id="pr-rangeEmpty" class="sub">No ranges added yet.</div>
+
+    <div class="radio-group" style="margin-top:12px;">
+      <label class="radio-opt active"><input type="radio" name="pr-type" value="flat" checked>Flat</label>
+      <label class="radio-opt"><input type="radio" name="pr-type" value="sequence">Sequence</label>
+      <label class="radio-opt"><input type="radio" name="pr-type" value="random">Random</label>
+      <label class="radio-opt"><input type="radio" name="pr-type" value="randomplus">Random+</label>
+    </div>
+    <div class="type-panel active" data-panel="flat"><label>Price / night (all listings)<input type="number" id="pr-flat-price" placeholder="110"></label></div>
+    <div class="type-panel" data-panel="sequence"><label>Start price (+1 per listing)<input type="number" id="pr-seq-start" placeholder="38"></label></div>
+    <div class="type-panel" data-panel="random randomplus">
+      <div class="field-row"><label>Min<input type="number" id="pr-rand-min" placeholder="90"></label><label>Max<input type="number" id="pr-rand-max" placeholder="150"></label></div>
+    </div>
+    <div id="pr-formErr" style="color:var(--danger);font-size:11px;min-height:14px;"></div>
+    <button id="pr-previewBtn">Preview</button>
+
+    <div id="pr-previewSection" style="display:none;margin-top:10px;">
+      <table><thead><tr><th></th><th>Property</th><th>Listing</th><th>Price</th></tr></thead><tbody id="pr-previewBody"></tbody></table>
+      <div class="sub">Uncheck to exclude. Applies across all ranges above for that listing.</div>
+      <button class="warn" id="pr-applyBtn">Apply</button>
+    </div>
+  </div>
+</section>
+
+</div>
+
+<div class="tabPanel" id="tab-block">
+<section>
+  <div class="section-head">Block Dates</div>
+  <div class="section-body">
+    <div class="field-row">
+      <label>From (check-in)<input type="date" id="c-from"></label>
+      <label>Nights<input type="number" id="c-nights" min="1" value="1"></label>
+      <label>To (check-out)<input type="date" id="c-to"></label>
+      <button id="c-addRangeBtn">Add range</button>
+    </div>
+    <table><thead><tr><th>From</th><th>To</th><th></th></tr></thead><tbody id="c-rangeBody"></tbody></table>
+    <div id="c-rangeEmpty" class="sub">No ranges added yet (the dates above are used if none are added).</div>
+    <div class="sub" style="margin-top:6px;">Skips any selected listing with an overlapping booking.</div>
+    <div id="c-formErr" style="color:var(--danger);font-size:11px;min-height:14px;"></div>
+    <button class="warn" id="c-runBtn">Block selected listings</button>
+  </div>
+</section>
+
+</div>
+
+<section id="logSection">
+  <div class="section-head">Log</div>
+  <div class="section-body" style="padding:0;"><div id="log"></div></div>
+</section>
+
+<script>
+// ### 1 --- config & state
+const WORKER_URL='https://smoobu-proxy-v2.ulnetconzept.workers.dev';
+let apartments=[],properties=[],selectedIds=[],priceRanges=[];
+const aptGroups=document.getElementById('aptGroups'),refreshBtn=document.getElementById('refreshBtn'),log=document.getElementById('log');
+
+// ### 2 --- worker call helper (text/plain avoids CORS preflight)
+function callWorker(action,extra){
+  return fetch(WORKER_URL,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify(Object.assign({action:action},extra||{}))})
+    .then(r=>r.text()).then(t=>{try{return JSON.parse(t);}catch(e){throw new Error('Non-JSON: '+t.slice(0,200));}});
+}
+
+// ### 3 --- log, with optional retry button on permanent failure
+function logEntry(label,status,data,retryFn){
+  const entry=document.createElement('div');entry.className='entry';
+  const meta=document.createElement('div');meta.className='meta '+status;
+  meta.textContent=label+' '+(status==='ok'?'OK':'ERROR');
+  if(retryFn){
+    const btn=document.createElement('button');btn.className='mini';btn.textContent='Retry';
+    btn.onclick=()=>{entry.remove();retryFn();};
+    meta.appendChild(btn);
+  }
+  const pre=document.createElement('pre');pre.textContent=typeof data==='string'?data:JSON.stringify(data,null,2);
+  entry.appendChild(meta);entry.appendChild(pre);log.prepend(entry);
+}
+
+// ### 4 --- listings + property grouping
+function resolveProperty(listingId){
+  return properties.find(p=>(p.listingIds||[]).includes(String(listingId)));
+}
+function refreshApartments(){
+  Promise.all([
+    callWorker('getApartments').then(res=>(res.body&&res.body.apartments)||[]),
+    callWorker('getMeta',{key:'apartments'}).then(res=>res.value||[])
+  ]).then(([apts,props])=>{
+    apartments=apts;properties=props;
+    renderApartments();
+    logEntry('refresh listings','ok',apartments);
+  }).catch(err=>logEntry('refresh listings','err',err.message));
+}
+function toggleGroup(ids,shouldSelect){
+  ids.forEach(id=>{
+    const i=selectedIds.indexOf(id);
+    if(shouldSelect&&i===-1)selectedIds.push(id);
+    if(!shouldSelect&&i!==-1)selectedIds.splice(i,1);
+  });
+  renderApartments();
+}
+function renderApartments(){
+  aptGroups.innerHTML='';
+  if(!apartments.length){aptGroups.innerHTML='<span style="color:var(--dim)">No listings loaded.</span>';return;}
+  const grouped={};
+  apartments.forEach(a=>{
+    const prop=resolveProperty(a.id);
+    const key=prop?prop.name:'(unassigned)';
+    (grouped[key]=grouped[key]||[]).push(a);
+  });
+  Object.keys(grouped).forEach(name=>{
+    const ids=grouped[name].map(a=>a.id);
+    const allSelected=ids.every(id=>selectedIds.indexOf(id)!==-1);
+    const box=document.createElement('div');box.className='propGroup';
+    const head=document.createElement('div');head.className='propGroupHead';
+    const label=document.createElement('span');label.textContent=name;
+    const toggleBtn=document.createElement('button');toggleBtn.className='mini';
+    toggleBtn.textContent=allSelected?'unselect all':'select all';
+    toggleBtn.onclick=()=>toggleGroup(ids,!allSelected);
+    head.appendChild(label);head.appendChild(toggleBtn);
+    box.appendChild(head);
+    grouped[name].forEach(a=>{
+      const chip=document.createElement('span');
+      chip.className='apt-chip'+(selectedIds.indexOf(a.id)!==-1?' selected':'');
+      chip.textContent=a.id+' — '+a.name;
+      chip.onclick=()=>{
+        const i=selectedIds.indexOf(a.id);
+        if(i===-1)selectedIds.push(a.id);else selectedIds.splice(i,1);
+        renderApartments();
+      };
+      box.appendChild(chip);
+    });
+    aptGroups.appendChild(box);
+  });
+}
+refreshBtn.onclick=refreshApartments;
+
+// ### 5 --- date helpers
+function toISO(d){return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');}
+function dateObj(s){const p=s.split('-');return new Date(+p[0],p[1]-1,+p[2]);}
+function todayISO(){return toISO(new Date());}
+
+// ### 6 --- price setter: ranges
+function pr_recomputeToFromNights(){
+  const nights=parseInt(document.getElementById('pr-nights').value,10);
+  if(!nights||nights<1)return;
+  const from=document.getElementById('pr-from').value||todayISO();
+  const d=dateObj(from);d.setDate(d.getDate()+(nights-1));
+  document.getElementById('pr-to').value=toISO(d);
+}
+document.getElementById('pr-nights').addEventListener('input',pr_recomputeToFromNights);
+document.getElementById('pr-from').addEventListener('change',pr_recomputeToFromNights);
+document.getElementById('pr-from').addEventListener('change',()=>{document.getElementById('pr-to').min=document.getElementById('pr-from').value;});
+document.getElementById('pr-to').addEventListener('change',()=>{
+  const f=document.getElementById('pr-from').value,t=document.getElementById('pr-to').value;
+  if(!f||!t)return;
+  const n=Math.round((dateObj(t)-dateObj(f))/86400000)+1;
+  if(n>=1)document.getElementById('pr-nights').value=n;
+});
+document.getElementById('pr-from').value=todayISO();document.getElementById('pr-to').min=todayISO();pr_recomputeToFromNights();
+
+
+function pr_renderRanges(){
+  const body=document.getElementById('pr-rangeBody');
+  document.getElementById('pr-rangeEmpty').style.display=priceRanges.length?'none':'block';
+  body.innerHTML='';
+  priceRanges.forEach((r,idx)=>{
+    const tr=document.createElement('tr');
+    tr.innerHTML=`<td>${r.from}</td><td>${r.to}</td><td></td>`;
+    const rm=document.createElement('button');rm.className='mini';rm.textContent='remove';
+    rm.onclick=()=>{priceRanges.splice(idx,1);pr_renderRanges();pr_hidePreview();};
+    tr.children[2].appendChild(rm);
+    body.appendChild(tr);
+  });
+}
+document.getElementById('pr-addRangeBtn').onclick=()=>{
+  const from=document.getElementById('pr-from').value||todayISO(),to=document.getElementById('pr-to').value;
+  if(!to||dateObj(to)<dateObj(from))return;
+  priceRanges.push({from,to});
+  document.getElementById('pr-from').value=todayISO();document.getElementById('pr-nights').value='1';pr_recomputeToFromNights();
+  pr_renderRanges();pr_hidePreview();
+};
+
+// ### 6b --- price setter: type toggle
+document.querySelectorAll('input[name="pr-type"]').forEach(r=>{
+  r.addEventListener('change',()=>{
+    r.closest('.section-body').querySelectorAll('.radio-opt').forEach(l=>l.classList.remove('active'));
+    r.closest('.radio-opt').classList.add('active');
+    r.closest('.section-body').querySelectorAll('.type-panel').forEach(p=>p.classList.toggle('active',p.dataset.panel.split(' ').includes(r.value)));
+    pr_hidePreview();
+  });
+});
+
+// ### 6c --- price setter: generate + preview + apply (runs over ALL fetched listings)
+function pr_generatePlan(){
+  const type=document.querySelector('input[name="pr-type"]:checked').value;
+  const list=selectedIds.length?apartments.filter(a=>selectedIds.indexOf(a.id)!==-1):apartments;
+  if(type==='flat'){
+    const price=parseFloat(document.getElementById('pr-flat-price').value);
+    if(isNaN(price))return null;
+    return list.map(a=>({apartmentId:a.id,name:a.name,price:price}));
+  }
+  if(type==='sequence'){
+    const start=parseFloat(document.getElementById('pr-seq-start').value);
+    if(isNaN(start))return null;
+    return list.map((a,i)=>({apartmentId:a.id,name:a.name,price:start+i}));
+  }
+  const min=parseFloat(document.getElementById('pr-rand-min').value),max=parseFloat(document.getElementById('pr-rand-max').value);
+  if(isNaN(min)||isNaN(max)||max<min)return null;
+  const rnd=()=>Math.floor(Math.random()*(max-min+1))+min;
+  if(type==='randomplus'){
+    const days=pr_allDays();
+    return list.map(a=>({apartmentId:a.id,name:a.name,days:days.map(d=>({d:d,price:rnd()}))}));
+  }
+  return list.map(a=>({apartmentId:a.id,name:a.name,price:rnd()}));
+}
+function pr_allDays(){
+  const set=new Set();
+  priceRanges.forEach(r=>{for(let d=dateObj(r.from);d<=dateObj(r.to);d.setDate(d.getDate()+1))set.add(toISO(d));});
+  return [...set].sort();
+}
+function pr_hidePreview(){document.getElementById('pr-previewSection').style.display='none';document.getElementById('pr-previewBody').innerHTML='';}
+document.getElementById('pr-previewBtn').onclick=()=>{
+  const err=document.getElementById('pr-formErr');err.textContent='';
+  if(!priceRanges.length){err.textContent='Add at least one date range.';return;}
+  if(!apartments.length){err.textContent='Refresh listings first.';return;}
+  const plan=pr_generatePlan();
+  if(!plan){err.textContent='Enter valid price value(s).';return;}
+  const body=document.getElementById('pr-previewBody');body.innerHTML='';
+  plan.forEach(row=>{
+    const prop=resolveProperty(row.apartmentId);
+    const tr=document.createElement('tr');
+    const tdCheck=document.createElement('td');
+    const cb=document.createElement('input');cb.type='checkbox';cb.checked=true;
+    tdCheck.appendChild(cb);
+    const tdProp=document.createElement('td');tdProp.textContent=prop?prop.name:'(unassigned)';
+    const tdName=document.createElement('td');tdName.textContent=row.apartmentId+' \u2014 '+row.name;
+    const tdPrice=document.createElement('td');
+    let pi=null;
+    if(row.days){
+      tr._dayInputs=row.days.map(x=>{
+        const w=document.createElement('label');w.style.cssText='display:inline-block;margin:0 6px 4px 0;font-size:9px;';w.textContent=x.d.slice(5)+' ';
+        const i=document.createElement('input');i.type='number';i.value=x.price;i.style.width='60px';i.dataset.d=x.d;
+        w.appendChild(i);tdPrice.appendChild(w);return i;
+      });
+    }else{
+      pi=document.createElement('input');pi.type='number';pi.value=row.price;
+      tdPrice.appendChild(pi);
+    }
+    tr._checkbox=cb;tr._priceInput=pi;tr.dataset.apartmentId=row.apartmentId;tr.dataset.name=row.name;
+    tr.appendChild(tdCheck);tr.appendChild(tdProp);tr.appendChild(tdName);tr.appendChild(tdPrice);
+    body.appendChild(tr);
+  });
+  document.getElementById('pr-previewSection').style.display='block';
+};
+document.getElementById('pr-applyBtn').onclick=()=>{
+  const err=document.getElementById('pr-formErr');err.textContent='';
+  const rows=document.querySelectorAll('#pr-previewBody tr');
+  if(!rows.length){err.textContent='Nothing to apply \u2014 run Preview first.';return;}
+  let plan=[],invalid=false;
+  rows.forEach(tr=>{
+    if(!tr._checkbox.checked)return;
+    if(tr._dayInputs){
+      const days=tr._dayInputs.map(i=>({d:i.dataset.d,price:parseFloat(i.value)}));
+      if(days.some(x=>isNaN(x.price))){invalid=true;return;}
+      plan.push({apartmentId:tr.dataset.apartmentId,name:tr.dataset.name,days});
+      return;
+    }
+    const price=parseFloat(tr._priceInput.value);
+    if(isNaN(price)){invalid=true;return;}
+    plan.push({apartmentId:tr.dataset.apartmentId,name:tr.dataset.name,price});
+  });
+  if(invalid){err.textContent='Every included listing needs a valid price.';return;}
+  if(!plan.length){err.textContent='All listings excluded \u2014 nothing to apply.';return;}
+  plan.forEach(row=>{
+    if(row.days){
+      const apt={id:row.apartmentId,name:row.name};
+      row.days.reduce((p,x)=>p.then(()=>attemptRate(apt,x.d,x.d,x.price,1)),Promise.resolve());
+      return;
+    }
+    priceRanges.forEach(r=>{
+      attemptRate({id:row.apartmentId,name:row.name},r.from,r.to,row.price,1);
+    });
+  });
+};
+
+// ### 8 --- rate call, with 1 auto-retry then a manual Retry button on the log entry
+function attemptRate(apt,from,to,price,attemptNum){
+  return callWorker('setRate',{apartmentId:apt.id,from:from,to:to,price:price}).then(res=>logEntry('rate '+apt.name,'ok',res))
+    .catch(err=>{
+      if(attemptNum<2)return attemptRate(apt,from,to,price,attemptNum+1);
+      logEntry('rate '+apt.name,'err',err.message,()=>attemptRate(apt,from,to,price,1));
+    });
+}
+
+// ### 10 --- init
+(function(){pr_renderRanges();})();
+
+
+// ### 8b --- block, with 1 auto-retry then a manual Retry button on the log entry
+function findConflict(bookings,from,to){
+  if(!bookings||!bookings.length)return null;
+  const reqFrom=new Date(from),reqTo=new Date(to);
+  for(const b of bookings){
+    const bFrom=new Date(b.arrival),bTo=new Date(b.departure);
+    if(reqFrom<bTo&&bFrom<reqTo)return b;
+  }
+  return null;
+}
+function attemptBlock(apt,from,to,attemptNum){
+  return callWorker('getBookings',{params:{apartmentId:apt.id,from:from,to:to}}).then(result=>{
+    const conflict=findConflict(result.body&&result.body.bookings,from,to);
+    if(conflict){logEntry('block '+apt.name,'err','Overlaps existing booking ('+(conflict['guest-name']||conflict.id)+'), skipped');return;}
+    return callWorker('blockDates',{apartmentId:apt.id,arrivalDate:from,departureDate:to}).then(res=>logEntry('block '+apt.name,'ok',res));
+  }).catch(err=>{
+    if(attemptNum<2)return attemptBlock(apt,from,to,attemptNum+1);
+    logEntry('block '+apt.name,'err',err.message,()=>attemptBlock(apt,from,to,1));
+  });
+}
+// ### 9 --- block date/nights sync (To = check-out = From + Nights)
+const cFrom=document.getElementById('c-from'),cTo=document.getElementById('c-to'),cNights=document.getElementById('c-nights');
+function syncTo(){const n=parseInt(cNights.value,10);if(!cFrom.value||!n||n<1)return;const d=dateObj(cFrom.value);d.setDate(d.getDate()+n);cTo.value=toISO(d);}
+function syncNights(){if(!cFrom.value||!cTo.value)return;const n=Math.round((dateObj(cTo.value)-dateObj(cFrom.value))/86400000);if(n>=1)cNights.value=n;}
+const setMin=()=>{if(!cFrom.value)return;const d=dateObj(cFrom.value);d.setDate(d.getDate()+1);cTo.min=toISO(d);};
+cNights.addEventListener('input',syncTo);cFrom.addEventListener('change',()=>{setMin();syncTo();});cTo.addEventListener('change',syncNights);
+
+// ### 9a --- block ranges
+let blockRanges=[];
+function renderBlockRanges(){
+  const b=document.getElementById('c-rangeBody');
+  document.getElementById('c-rangeEmpty').style.display=blockRanges.length?'none':'block';
+  b.innerHTML='';
+  blockRanges.forEach((rg,i)=>{
+    const tr=document.createElement('tr');
+    [rg.from,rg.to].forEach(x=>{const td=document.createElement('td');td.textContent=x;tr.appendChild(td);});
+    const td=document.createElement('td');
+    const rm=document.createElement('button');rm.className='mini';rm.textContent='remove';
+    rm.onclick=()=>{blockRanges.splice(i,1);renderBlockRanges();};
+    td.appendChild(rm);tr.appendChild(td);b.appendChild(tr);
+  });
+}
+document.getElementById('c-addRangeBtn').onclick=()=>{
+  const err=document.getElementById('c-formErr');err.textContent='';
+  if(!cFrom.value||!cTo.value||cTo.value<=cFrom.value){err.textContent='Check-out must be after check-in (at least 1 night).';return;}
+  blockRanges.push({from:cFrom.value,to:cTo.value});
+  renderBlockRanges();
+};
+
+// ### 9b --- block run
+document.getElementById('c-runBtn').onclick=()=>{
+  const err=document.getElementById('c-formErr');err.textContent='';
+  let ranges=blockRanges;
+  if(!ranges.length){
+    if(!cFrom.value||!cTo.value){err.textContent='Add a range or set From and To.';return;}
+    if(cTo.value<=cFrom.value){err.textContent='Check-out must be after check-in (at least 1 night).';return;}
+    ranges=[{from:cFrom.value,to:cTo.value}];
+  }
+  if(!selectedIds.length){err.textContent='Pick at least one listing.';return;}
+  apartments.filter(a=>selectedIds.indexOf(a.id)!==-1).forEach(apt=>ranges.forEach(rg=>attemptBlock(apt,rg.from,rg.to,1)));
+};
+
+// ### 10b --- block init
+cFrom.value=todayISO();setMin();syncTo();renderBlockRanges();
+
+// ### 11 --- tabs
+document.querySelectorAll('.tab').forEach(t=>{
+  t.onclick=()=>{
+    document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('active',x===t));
+    document.querySelectorAll('.tabPanel').forEach(p=>p.classList.toggle('active',p.id===t.dataset.tab));
+  };
+});
+</script>
+</body>
+</html>
