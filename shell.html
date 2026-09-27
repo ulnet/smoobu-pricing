@@ -134,8 +134,8 @@
   <div class="row">
     <input type="text" id="mi-label" placeholder="Label">
     <select id="mi-type">
-      <option value="iframe_url">iframe_url (link to existing page)</option>
-      <option value="custom_html">custom_html (paste HTML below)</option>
+      <option value="iframe_url">URL / Link</option>
+      <option value="custom_html">HTML</option>
     </select>
     <input type="text" id="mi-order" placeholder="order" style="width:60px">
   </div>
@@ -148,6 +148,8 @@
   <textarea id="mi-html" placeholder="&lt;html&gt;...&lt;/html&gt;" style="display:none"></textarea>
   <div class="row" style="margin-top:8px">
     <button class="save-btn" id="mi-add">Add</button>
+    <button class="icon-btn" id="mi-add-open">Add + open</button>
+    <button class="icon-btn" id="mi-console-btn">Console</button>
     <a href="#" id="mi-cancel-edit" style="display:none; color:var(--muted); font-size:12px; align-self:center;">Cancel edit</a>
     <span class="status" id="mi-status"></span>
   </div>
@@ -302,6 +304,7 @@ async function loadAdminMenu() {
     tr.innerHTML = `<td>${item.label}</td><td>${item.type}</td><td>${item.target}</td><td>${item.sort_order}</td><td><button class="edit-btn">Edit</button> <button class="danger">Delete</button></td>`;
     const [editBtn, deleteBtn] = tr.querySelectorAll("button");
     deleteBtn.addEventListener("click", async () => {
+      if (!confirm(`Delete "${item.label}"? This cannot be undone.`)) return;
       await api("/api/menu/" + item.id, { method: "DELETE" });
       loadAdminMenu();
     });
@@ -368,28 +371,28 @@ async function startEdit(item) {
   }
 }
 
-$("mi-add").addEventListener("click", async () => {
+async function saveMenuItem() {
   $("mi-status").textContent = "";
   const label = $("mi-label").value.trim();
   const type = $("mi-type").value;
   const sort_order = parseInt($("mi-order").value || "0", 10);
-  if (!label) { $("mi-status").textContent = "Label is required"; return; }
+  if (!label) { $("mi-status").textContent = "Label is required"; return null; }
 
   let target;
   if (type === "custom_html") {
     const html_content = $("mi-html").value;
-    if (!html_content.trim()) { $("mi-status").textContent = "Paste or upload some HTML first"; return; }
+    if (!html_content.trim()) { $("mi-status").textContent = "Paste or upload some HTML first"; return null; }
     const slug = editingSlug || slugify(label);
     const { ok: pageOk } = await api("/api/pages", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ slug, title: label, html_content }),
     });
-    if (!pageOk) { $("mi-status").textContent = "Failed to save the page"; return; }
+    if (!pageOk) { $("mi-status").textContent = "Failed to save the page"; return null; }
     target = slug;
   } else {
     target = $("mi-target").value.trim();
-    if (!target) { $("mi-status").textContent = "URL is required"; return; }
+    if (!target) { $("mi-status").textContent = "URL is required"; return null; }
   }
 
   const { ok } = editingId
@@ -404,10 +407,36 @@ $("mi-add").addEventListener("click", async () => {
         body: JSON.stringify({ label, type, target, sort_order }),
       });
   $("mi-status").textContent = ok ? (editingId ? "Saved" : "Added") : "Failed to save";
+  if (!ok) return null;
+  return { type, target };
+}
 
+$("mi-add").addEventListener("click", async () => {
+  const saved = await saveMenuItem();
+  if (!saved) return;
   resetForm();
   loadAdminMenu();
   loadAdminPages();
+});
+
+$("mi-add-open").addEventListener("click", async () => {
+  const saved = await saveMenuItem();
+  if (!saved) return;
+  resetForm();
+  loadAdminMenu();
+  loadAdminPages();
+  const openUrl = saved.type === "custom_html" ? API_BASE + "/page/" + saved.target : saved.target;
+  await loadMenu();
+  currentTarget = openUrl;
+  localStorage.setItem("last_target", openUrl);
+  await showMain();
+  $("menu-select").value = openUrl;
+  $("frame").src = openUrl;
+});
+
+$("mi-console-btn").addEventListener("click", async () => {
+  await loadMenu();
+  await showMain();
 });
 
 async function loadAdminPages() {
@@ -416,8 +445,19 @@ async function loadAdminPages() {
   tbody.innerHTML = "";
   (data || []).forEach((p) => {
     const tr = document.createElement("tr");
-    tr.innerHTML = `<td>${p.slug}</td><td>${p.title}</td><td>${p.updated_at}</td><td><button class="danger" data-id="${p.id}">Delete</button></td>`;
-    tr.querySelector("button").addEventListener("click", async () => {
+    tr.innerHTML = `<td>${p.slug}</td><td>${p.title}</td><td>${p.updated_at}</td><td><button class="open-btn">Open</button> <button class="danger" data-id="${p.id}">Delete</button></td>`;
+    const [openBtn, deleteBtn] = tr.querySelectorAll("button");
+    openBtn.addEventListener("click", async () => {
+      const openUrl = API_BASE + "/page/" + p.slug;
+      await loadMenu();
+      currentTarget = openUrl;
+      localStorage.setItem("last_target", openUrl);
+      await showMain();
+      $("menu-select").value = openUrl;
+      $("frame").src = openUrl;
+    });
+    deleteBtn.addEventListener("click", async () => {
+      if (!confirm(`Delete page "${p.title}" (${p.slug})? This cannot be undone, and any menu item pointing at it will break.`)) return;
       await api("/api/pages/" + p.id, { method: "DELETE" });
       loadAdminPages();
     });
