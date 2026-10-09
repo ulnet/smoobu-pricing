@@ -164,7 +164,7 @@
 
   <h2>Saved custom pages</h2>
   <table id="pages-table">
-    <thead><tr><th>Slug</th><th>Title</th><th>Updated</th><th></th></tr></thead>
+    <thead><tr><th>Slug</th><th>Title</th><th>Updated</th><th>In menu</th><th></th></tr></thead>
     <tbody></tbody>
   </table>
 
@@ -349,13 +349,27 @@ async function openInConsole(openUrl) {
 
 async function loadAdminMenu() {
   const { data } = await api("/api/menu");
+  const pageSlugs = new Set(((await api("/api/pages")).data || []).map((p) => p.slug));
+  const trashed = (await getTrash()).filter((t) => t.kind === "page");
   const tbody = document.querySelector("#menu-table tbody");
   tbody.innerHTML = "";
   (data || []).forEach((item) => {
+    const broken = item.type === "custom_html" && !pageSlugs.has(item.target);
     const tr = document.createElement("tr");
-    tr.innerHTML = `<td>${esc(item.label)}</td><td>${typeLabels[item.type] || esc(item.type)}</td><td>${esc(item.target)}</td><td>${esc(item.sort_order)}</td><td></td>`;
+    tr.innerHTML = `<td>${esc(item.label)}${broken ? ` <span style="color:var(--danger)">&#9888; page missing</span>` : ""}</td><td>${typeLabels[item.type] || esc(item.type)}</td><td>${esc(item.target)}</td><td>${esc(item.sort_order)}</td><td></td>`;
+    const t = broken ? trashed.find((x) => x.data.slug === item.target) : null;
     tr.lastElementChild.appendChild(actionSelect([
       { label: "Edit", run: () => startEdit(item) },
+      ...(t ? [{
+        label: "Restore its page",
+        confirm: `Restore page "${t.name}" so this menu item works again?`,
+        run: async () => {
+          const { ok } = await api("/api/pages", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(t.data) });
+          if (!ok) { alert("Restore failed."); return; }
+          await setTrash((await getTrash()).filter((x) => x.id !== t.id));
+          loadAdminMenu(); loadAdminPages();
+        },
+      }] : []),
       {
         label: "Delete",
         confirm: `Delete menu item "${item.label}"? It stays in the list marked deleted, so you can restore it.`,
@@ -489,13 +503,25 @@ $("mi-add-open").addEventListener("click", async () => {
 
 async function loadAdminPages() {
   const { data } = await api("/api/pages");
+  const menu = (await api("/api/menu")).data || [];
+  const inMenu = new Set(menu.filter((m) => m.type === "custom_html").map((m) => m.target));
+  const nextOrder = menu.reduce((n, m) => Math.max(n, Number(m.sort_order) || 0), 0) + 1;
   const tbody = document.querySelector("#pages-table tbody");
   tbody.innerHTML = "";
   (data || []).forEach((p) => {
     const tr = document.createElement("tr");
-    tr.innerHTML = `<td>${esc(p.slug)}</td><td>${esc(p.title)}</td><td>${esc(p.updated_at)}</td><td></td>`;
+    tr.innerHTML = `<td>${esc(p.slug)}</td><td>${esc(p.title)}</td><td>${esc(p.updated_at)}</td><td>${inMenu.has(p.slug) ? "Yes" : `<span style="color:var(--danger)">No</span>`}</td><td></td>`;
     tr.lastElementChild.appendChild(actionSelect([
       { label: "Open in console", run: () => openInConsole(API_BASE + "/page/" + p.slug) },
+      ...(inMenu.has(p.slug) ? [] : [{
+        label: "Add to menu",
+        confirm: `Add "${p.title}" to the app list?`,
+        run: async () => {
+          const { ok } = await api("/api/menu", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ label: p.title, type: "custom_html", target: p.slug, sort_order: nextOrder }) });
+          if (!ok) { alert("Could not add to menu."); return; }
+          loadAdminMenu(); loadAdminPages();
+        },
+      }]),
       {
         label: "Delete",
         confirm: `Delete page "${p.title}" (${p.slug})? It stays in the list marked deleted, so you can restore it. Any menu item pointing at it will break until then.`,
@@ -522,7 +548,7 @@ async function trashRows(kind, tbody) {
     tr.style.opacity = "0.55";
     const d = (t.deleted_at || "").slice(0, 16).replace("T", " ");
     tr.innerHTML = kind === "page"
-      ? `<td>${esc(t.data.slug)}</td><td>${esc(t.data.title)} <i>(deleted)</i></td><td>${esc(d)}</td><td></td>`
+      ? `<td>${esc(t.data.slug)}</td><td>${esc(t.data.title)} <i>(deleted)</i></td><td>${esc(d)}</td><td></td><td></td>`
       : `<td>${esc(t.data.label)} <i>(deleted)</i></td><td>${typeLabels[t.data.type] || esc(t.data.type)}</td><td>${esc(t.data.target)}</td><td>${esc(t.data.sort_order)}</td><td></td>`;
     tr.lastElementChild.appendChild(actionSelect([
       {
