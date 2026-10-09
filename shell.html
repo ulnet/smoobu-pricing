@@ -168,11 +168,6 @@
     <tbody></tbody>
   </table>
 
-  <h2>Trash (restorable)</h2>
-  <table id="trash-table">
-    <thead><tr><th>Kind</th><th>Name</th><th>Deleted</th><th></th></tr></thead>
-    <tbody></tbody>
-  </table>
 </div>
 
 <script>
@@ -252,7 +247,6 @@ async function showAdmin() {
   $("admin-view").style.display = "block";
   await loadAdminMenu();
   await loadAdminPages();
-  await loadTrash();
 }
 
 async function loadMenu() {
@@ -364,18 +358,18 @@ async function loadAdminMenu() {
       { label: "Edit", run: () => startEdit(item) },
       {
         label: "Delete",
-        confirm: `Delete menu item "${item.label}"? It moves to Trash and can be restored.`,
+        confirm: `Delete menu item "${item.label}"? It stays in the list marked deleted, so you can restore it.`,
         run: async () => {
           const saved = await addToTrash({ kind: "menu", name: item.label, data: { label: item.label, type: item.type, target: item.target, sort_order: item.sort_order } });
           if (!saved) { alert("Could not save a restore copy, so nothing was deleted."); return; }
           await api("/api/menu/" + item.id, { method: "DELETE" });
           loadAdminMenu();
-          loadTrash();
         },
       },
     ]));
     tbody.appendChild(tr);
   });
+  await trashRows("menu", tbody);
 }
 
 function slugify(text) {
@@ -504,7 +498,7 @@ async function loadAdminPages() {
       { label: "Open in console", run: () => openInConsole(API_BASE + "/page/" + p.slug) },
       {
         label: "Delete",
-        confirm: `Delete page "${p.title}" (${p.slug})? It moves to Trash and can be restored. Any menu item pointing at it will break until then.`,
+        confirm: `Delete page "${p.title}" (${p.slug})? It stays in the list marked deleted, so you can restore it. Any menu item pointing at it will break until then.`,
         run: async () => {
           const res = await fetch(API_BASE + "/page/" + p.slug);
           if (!res.ok) { alert("Could not read the page's HTML for a restore copy, so nothing was deleted."); return; }
@@ -513,35 +507,34 @@ async function loadAdminPages() {
           if (!saved) { alert("Could not save a restore copy, so nothing was deleted."); return; }
           await api("/api/pages/" + p.id, { method: "DELETE" });
           loadAdminPages();
-          loadTrash();
         },
       },
     ]));
     tbody.appendChild(tr);
   });
+  await trashRows("page", tbody);
 }
 
-async function loadTrash() {
-  const list = await getTrash();
-  const tbody = document.querySelector("#trash-table tbody");
-  tbody.innerHTML = "";
-  if (!list.length) { tbody.innerHTML = `<tr><td colspan="4" style="color:var(--muted)">Trash is empty</td></tr>`; return; }
+async function trashRows(kind, tbody) {
+  const list = (await getTrash()).filter((t) => t.kind === kind);
   list.forEach((t) => {
     const tr = document.createElement("tr");
-    tr.innerHTML = `<td>${t.kind === "page" ? "Page" : "Menu item"}</td><td>${esc(t.name)}</td><td>${esc((t.deleted_at || "").slice(0, 16).replace("T", " "))}</td><td></td>`;
+    tr.style.opacity = "0.55";
+    const d = (t.deleted_at || "").slice(0, 16).replace("T", " ");
+    tr.innerHTML = kind === "page"
+      ? `<td>${esc(t.data.slug)}</td><td>${esc(t.data.title)} <i>(deleted)</i></td><td>${esc(d)}</td><td></td>`
+      : `<td>${esc(t.data.label)} <i>(deleted)</i></td><td>${typeLabels[t.data.type] || esc(t.data.type)}</td><td>${esc(t.data.target)}</td><td>${esc(t.data.sort_order)}</td><td></td>`;
     tr.lastElementChild.appendChild(actionSelect([
       {
         label: "Restore",
-        confirm: `Restore ${t.kind === "page" ? "page" : "menu item"} "${t.name}"?`,
+        confirm: `Restore "${t.name}"?`,
         run: async () => {
           const body = JSON.stringify(t.data);
           const headers = { "Content-Type": "application/json" };
-          const { ok } = t.kind === "page"
-            ? await api("/api/pages", { method: "POST", headers, body })
-            : await api("/api/menu", { method: "POST", headers, body });
-          if (!ok) { alert("Restore failed — it stays in Trash."); return; }
+          const { ok } = await api(kind === "page" ? "/api/pages" : "/api/menu", { method: "POST", headers, body });
+          if (!ok) { alert("Restore failed."); return; }
           await setTrash((await getTrash()).filter((x) => x.id !== t.id));
-          loadAdminMenu(); loadAdminPages(); loadTrash();
+          loadAdminMenu(); loadAdminPages();
         },
       },
       {
@@ -549,7 +542,7 @@ async function loadTrash() {
         confirm: `Permanently delete "${t.name}"? This cannot be restored.`,
         run: async () => {
           await setTrash((await getTrash()).filter((x) => x.id !== t.id));
-          loadTrash();
+          loadAdminMenu(); loadAdminPages();
         },
       },
     ]));
