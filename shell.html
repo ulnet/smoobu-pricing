@@ -4,6 +4,14 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Smoobu Console</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#0f1410">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Smoobu">
+<link rel="icon" type="image/png" href="/icon-192.png">
+<link rel="apple-touch-icon" href="/icon-192.png">
 <style>
   :root {
     --bg: #0f1410;
@@ -93,6 +101,7 @@
   td button { background: none; border: 1px solid var(--border); color: var(--muted); border-radius: 3px; padding: 3px 8px; cursor: pointer; margin-right: 4px; }
   td button:hover { color: var(--text); }
   td button.danger:hover { color: var(--danger); border-color: var(--danger); }
+  select.act { background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 3px; padding: 4px; cursor: pointer; }
   textarea { width: 100%; min-height: 160px; font-family: monospace; }
   .save-btn { background: var(--accent); color: #0f1410; border: none; border-radius: 3px; padding: 8px 14px; font-weight: 600; cursor: pointer; }
   .status { font-size: 12px; color: var(--muted); margin-left: 8px; }
@@ -123,7 +132,7 @@
 <div id="admin-view">
   <div class="row" style="justify-content:space-between; margin-bottom:16px; position:sticky; top:0; background:var(--bg); z-index:2; padding:8px 0;">
     <button class="icon-btn" id="back-btn">&larr; Back to console</button>
-    <button class="icon-btn" id="logout-btn">Log out</button>
+    <button class="icon-btn" id="logout-btn" title="Log out" aria-label="Log out">&#10005;</button>
   </div>
 
   <h2>Menu items</h2>
@@ -156,6 +165,12 @@
   <h2>Saved custom pages</h2>
   <table id="pages-table">
     <thead><tr><th>Slug</th><th>Title</th><th>Updated</th><th></th></tr></thead>
+    <tbody></tbody>
+  </table>
+
+  <h2>Trash (restorable)</h2>
+  <table id="trash-table">
+    <thead><tr><th>Kind</th><th>Name</th><th>Deleted</th><th></th></tr></thead>
     <tbody></tbody>
   </table>
 </div>
@@ -237,6 +252,7 @@ async function showAdmin() {
   $("admin-view").style.display = "block";
   await loadAdminMenu();
   await loadAdminPages();
+  await loadTrash();
 }
 
 async function loadMenu() {
@@ -295,6 +311,47 @@ $("back-btn").addEventListener("click", async () => {
 });
 
 const typeLabels = { iframe_url: "URL / Link", custom_html: "HTML" };
+const PROXY_BASE = "https://smoobu-proxy-v2.ulnetconzept.workers.dev";
+
+async function proxy(action, extra = {}) {
+  const res = await fetch(PROXY_BASE, {
+    method: "POST",
+    headers: { "Content-Type": "text/plain;charset=utf-8" },
+    body: JSON.stringify({ action, ...extra }),
+  });
+  return JSON.parse(await res.text());
+}
+async function getTrash() { const r = await proxy("getMeta", { key: "console_trash" }); return r.value || []; }
+async function setTrash(list) { const r = await proxy("setMeta", { key: "console_trash", value: list }); return !!r.success; }
+async function addToTrash(entry) {
+  const list = await getTrash();
+  list.unshift({ id: Date.now() + "-" + Math.random().toString(36).slice(2, 7), deleted_at: new Date().toISOString(), ...entry });
+  return setTrash(list);
+}
+const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+function actionSelect(opts) {
+  const s = document.createElement("select");
+  s.className = "act";
+  s.innerHTML = `<option value="">Action…</option>` + opts.map((o, i) => `<option value="${i}">${esc(o.label)}</option>`).join("");
+  s.addEventListener("change", async () => {
+    const o = opts[s.value];
+    s.value = "";
+    if (!o) return;
+    if (o.confirm && !confirm(o.confirm)) return;
+    await o.run();
+  });
+  return s;
+}
+
+async function openInConsole(openUrl) {
+  await loadMenu();
+  currentTarget = openUrl;
+  localStorage.setItem("last_target", openUrl);
+  await showMain();
+  $("menu-select").value = openUrl;
+  $("frame").src = openUrl;
+}
 
 async function loadAdminMenu() {
   const { data } = await api("/api/menu");
@@ -302,14 +359,21 @@ async function loadAdminMenu() {
   tbody.innerHTML = "";
   (data || []).forEach((item) => {
     const tr = document.createElement("tr");
-    tr.innerHTML = `<td>${item.label}</td><td>${typeLabels[item.type] || item.type}</td><td>${item.target}</td><td>${item.sort_order}</td><td><button class="edit-btn">Edit</button> <button class="danger">Delete</button></td>`;
-    const [editBtn, deleteBtn] = tr.querySelectorAll("button");
-    deleteBtn.addEventListener("click", async () => {
-      if (!confirm(`Delete "${item.label}"? This cannot be undone.`)) return;
-      await api("/api/menu/" + item.id, { method: "DELETE" });
-      loadAdminMenu();
-    });
-    editBtn.addEventListener("click", async () => { await startEdit(item); });
+    tr.innerHTML = `<td>${esc(item.label)}</td><td>${typeLabels[item.type] || esc(item.type)}</td><td>${esc(item.target)}</td><td>${esc(item.sort_order)}</td><td></td>`;
+    tr.lastElementChild.appendChild(actionSelect([
+      { label: "Edit", run: () => startEdit(item) },
+      {
+        label: "Delete",
+        confirm: `Delete menu item "${item.label}"? It moves to Trash and can be restored.`,
+        run: async () => {
+          const saved = await addToTrash({ kind: "menu", name: item.label, data: { label: item.label, type: item.type, target: item.target, sort_order: item.sort_order } });
+          if (!saved) { alert("Could not save a restore copy, so nothing was deleted."); return; }
+          await api("/api/menu/" + item.id, { method: "DELETE" });
+          loadAdminMenu();
+          loadTrash();
+        },
+      },
+    ]));
     tbody.appendChild(tr);
   });
 }
@@ -426,13 +490,7 @@ $("mi-add-open").addEventListener("click", async () => {
   resetForm();
   loadAdminMenu();
   loadAdminPages();
-  const openUrl = saved.type === "custom_html" ? API_BASE + "/page/" + saved.target : saved.target;
-  await loadMenu();
-  currentTarget = openUrl;
-  localStorage.setItem("last_target", openUrl);
-  await showMain();
-  $("menu-select").value = openUrl;
-  $("frame").src = openUrl;
+  await openInConsole(saved.type === "custom_html" ? API_BASE + "/page/" + saved.target : saved.target);
 });
 
 async function loadAdminPages() {
@@ -441,24 +499,67 @@ async function loadAdminPages() {
   tbody.innerHTML = "";
   (data || []).forEach((p) => {
     const tr = document.createElement("tr");
-    tr.innerHTML = `<td>${p.slug}</td><td>${p.title}</td><td>${p.updated_at}</td><td><button class="open-btn">Open</button> <button class="danger" data-id="${p.id}">Delete</button></td>`;
-    const [openBtn, deleteBtn] = tr.querySelectorAll("button");
-    openBtn.addEventListener("click", async () => {
-      const openUrl = API_BASE + "/page/" + p.slug;
-      await loadMenu();
-      currentTarget = openUrl;
-      localStorage.setItem("last_target", openUrl);
-      await showMain();
-      $("menu-select").value = openUrl;
-      $("frame").src = openUrl;
-    });
-    deleteBtn.addEventListener("click", async () => {
-      if (!confirm(`Delete page "${p.title}" (${p.slug})? This cannot be undone, and any menu item pointing at it will break.`)) return;
-      await api("/api/pages/" + p.id, { method: "DELETE" });
-      loadAdminPages();
-    });
+    tr.innerHTML = `<td>${esc(p.slug)}</td><td>${esc(p.title)}</td><td>${esc(p.updated_at)}</td><td></td>`;
+    tr.lastElementChild.appendChild(actionSelect([
+      { label: "Open in console", run: () => openInConsole(API_BASE + "/page/" + p.slug) },
+      {
+        label: "Delete",
+        confirm: `Delete page "${p.title}" (${p.slug})? It moves to Trash and can be restored. Any menu item pointing at it will break until then.`,
+        run: async () => {
+          const res = await fetch(API_BASE + "/page/" + p.slug);
+          if (!res.ok) { alert("Could not read the page's HTML for a restore copy, so nothing was deleted."); return; }
+          const html_content = await res.text();
+          const saved = await addToTrash({ kind: "page", name: p.title, data: { slug: p.slug, title: p.title, html_content } });
+          if (!saved) { alert("Could not save a restore copy, so nothing was deleted."); return; }
+          await api("/api/pages/" + p.id, { method: "DELETE" });
+          loadAdminPages();
+          loadTrash();
+        },
+      },
+    ]));
     tbody.appendChild(tr);
   });
+}
+
+async function loadTrash() {
+  const list = await getTrash();
+  const tbody = document.querySelector("#trash-table tbody");
+  tbody.innerHTML = "";
+  if (!list.length) { tbody.innerHTML = `<tr><td colspan="4" style="color:var(--muted)">Trash is empty</td></tr>`; return; }
+  list.forEach((t) => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td>${t.kind === "page" ? "Page" : "Menu item"}</td><td>${esc(t.name)}</td><td>${esc((t.deleted_at || "").slice(0, 16).replace("T", " "))}</td><td></td>`;
+    tr.lastElementChild.appendChild(actionSelect([
+      {
+        label: "Restore",
+        confirm: `Restore ${t.kind === "page" ? "page" : "menu item"} "${t.name}"?`,
+        run: async () => {
+          const body = JSON.stringify(t.data);
+          const headers = { "Content-Type": "application/json" };
+          const { ok } = t.kind === "page"
+            ? await api("/api/pages", { method: "POST", headers, body })
+            : await api("/api/menu", { method: "POST", headers, body });
+          if (!ok) { alert("Restore failed — it stays in Trash."); return; }
+          await setTrash((await getTrash()).filter((x) => x.id !== t.id));
+          loadAdminMenu(); loadAdminPages(); loadTrash();
+        },
+      },
+      {
+        label: "Delete forever",
+        confirm: `Permanently delete "${t.name}"? This cannot be restored.`,
+        run: async () => {
+          await setTrash((await getTrash()).filter((x) => x.id !== t.id));
+          loadTrash();
+        },
+      },
+    ]));
+    tbody.appendChild(tr);
+  });
+}
+
+// ---- pwa ----
+if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
+  navigator.serviceWorker.register("/sw.js").catch(() => {});
 }
 
 // ---- init ----
