@@ -1,0 +1,25 @@
+name = "direct-site"
+main = "worker.js"
+compatibility_date = "2026-09-01"
+workers_dev = true
+preview_urls = false
+
+[[d1_databases]]
+binding = "DB"
+database_name = "smoobu_db"
+database_id = "017e23fd-8289-4281-a72c-585e80af40f1"
+
+[[r2_buckets]]
+binding = "PHOTOS"
+bucket_name = "direct-site-photos"
+
+[[services]]
+binding = "SMOOBU"
+service = "smoobu-proxy-v2"
+
+[[routes]]
+pattern = "book.kazija.com"
+custom_domain = true
+
+[triggers]
+crons = ["*/15 * * * *"]
