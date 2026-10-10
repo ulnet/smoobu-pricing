@@ -1,24 +1,24 @@
 FROM: Sykes Holiday Cottages
-SUBJECT: Sykes Holiday Cottages Reservation for 2B Example Road from Monday 12th October 2026 to Saturday 17th October 2026
+SUBJECT: Sykes Holiday Cottages Reservation for 2B Granville Road from Monday 12th October 2026 to Saturday 17th October 2026
 ---
-Dear Mr Owner Name,
+Dear Mr Duke Nwikina,
 
-You have a new booking, the booking reference is XXXXX-26-XX
+You have a new booking, the booking reference is OC4TA-26-SA
 
 
 Booking Information
 
-Property name:	2B Example Road - Ref: 0000000
+Property name:	2B Granville Road - Ref: 1208359
 Check in:	Monday 12th October 2026 at 3:00 PM
 Check out:	Saturday 17th October 2026 at 10:00 AM
 Nights:	5
 
 Guest information
 
-Guest name:	Mr Test Guest (0000000000)
+Guest name:	Mr James Brown (1113811224)
 Contact no:	0000000
 Post code:	0000
-Email address:	guest@example.com
+Email address:	jbrown.699321@guest.booking.com
 
 Party details
 
