@@ -14,12 +14,13 @@ body{font-family:sans-serif;margin:0;color:#222}
 .chip{font-size:12px;border-radius:10px;padding:3px 10px;background:#eef}
 .chip.dirty{background:#fdebd0;color:#935116}
 .chip.clean{background:#d5f5e3;color:#1e8449}
-.pane{display:none;padding:12px 16px;max-width:1000px}
+.common{padding:4px 16px 0;max-width:1000px}
+.pane{display:none;padding:4px 16px 12px;max-width:1000px}
 .pane.on{display:block}
 h3{margin:0 0 6px;font-size:15px}
 .bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:8px 0}
 button{padding:6px 11px;cursor:pointer}
-input,select{padding:4px;box-sizing:border-box}
+input,select,textarea{padding:4px;box-sizing:border-box;font-family:inherit}
 input[type=number]{width:72px}
 input[type=text],input[type=date]{width:125px}
 .card{border:1px solid #ccc;border-radius:6px;padding:10px;margin:10px 0}
@@ -37,7 +38,7 @@ table.f td,table.f th{padding:2px 5px;font-size:12px;text-align:left}
 .dow input{width:56px}
 label.chk{display:flex;gap:4px;align-items:center;font-size:13px}
 .x{padding:1px 7px}
-.wrap{overflow:auto;max-height:58vh;border:1px solid #ccc;margin-top:8px}
+.wrap{overflow:auto;max-height:56vh;border:1px solid #ccc;margin-top:8px}
 table.g{border-collapse:collapse;font-size:12px}
 table.g td,table.g th{border:1px solid #ddd;padding:3px 5px;text-align:center;min-width:44px}
 table.g th{position:sticky;top:0;background:#f5f5f5;z-index:2}
@@ -46,9 +47,20 @@ table.g tr.apt td{background:#e8eef7;font-weight:bold;text-align:left}
 table.g td.b{background:#ddd;color:#888}
 table.g td.orph{outline:2px solid #e67e22;outline-offset:-2px}
 table.g td.cap{font-style:italic}
+table.g td.ov{background:#fcf3cf;outline:2px solid #b7950b;outline-offset:-2px}
 table.g td.sel{box-shadow:inset 0 0 0 2px #333}
 pre{background:#f7f7f7;padding:8px;font-size:12px;overflow:auto;max-height:240px;margin:0}
+.bt{background:#d6eaf8;color:#1b4f72;cursor:pointer}
 .banner{background:#fdebd0;border:1px solid #e5b98a;border-radius:6px;padding:6px 10px;font-size:13px;margin:6px 0}
+.notes{width:100%;height:70px}
+.notelog{font-size:12px;color:#444;max-height:90px;overflow:auto;border:1px solid #ddd;padding:4px;margin-top:4px;background:#fafafa}
+.notelog div{margin-bottom:3px}
+.notelog b{color:#666}
+ul.ovlist{list-style:none;margin:6px 0;padding:0;font-size:13px}
+ul.ovlist li{padding:3px 0;border-bottom:1px solid #eee;display:flex;gap:8px;align-items:center}
+.chkrow{display:flex;gap:4px;align-items:center;font-size:13px}
+.hi{vertical-align:super;font-size:10px !important;width:13px !important;height:13px !important;margin-left:3px !important;display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;border-radius:50%;background:#d6e4f0;color:#2e6da4;font-size:11px;font-weight:bold;cursor:pointer;margin-left:4px;user-select:none}
+#helpPop{position:fixed;max-width:280px;background:#333;color:#fff;font-size:12px;padding:8px 10px;border-radius:6px;box-shadow:0 2px 8px rgba(0,0,0,.3);z-index:50;display:none}
 </style>
 </head>
 <body>
@@ -56,30 +68,69 @@ pre{background:#f7f7f7;padding:8px;font-size:12px;overflow:auto;max-height:240px
   <h2>Pricing <span class="chip">simulation only, nothing is written to Smoobu</span></h2>
   <div class="tabs">
     <div class="tab on" data-tab="edit">1. Strategies &amp; apartments</div>
-    <div class="tab" data-tab="sim">2. Simulator &amp; save</div>
+    <div class="tab" data-tab="cal">2. Calendar &amp; overrides</div>
+    <div class="tab" data-tab="sim">3. Simulator &amp; save</div>
+    <div class="tab" data-tab="live">4. Live run &amp; log</div>
     <span class="chip clean" id="dirty">saved</span>
   </div>
 </div>
 
-<div class="pane on" id="edit">
-  <div class="banner">Everything here is a <b>draft</b>. Nothing is stored until you test it in tab 2 and press <b>Save as active</b> there.</div>
+<div class="common">
   <div class="card">
-    <h3>Apartments</h3>
-    <div class="hint">Each apartment keeps its own price limits and chooses which strategy it follows. The limits are yours; the strategy only decides how much to move the price up or down from the base.</div>
+    <h3>Apartments <span class="hi" data-help="limits">?</span></h3>
     <table class="f" id="aptTbl"></table>
   </div>
-  <div class="bar"><b>Strategy</b><select id="sSel"></select><button id="sNew">New</button><button id="sDup">Duplicate</button><button id="sRen">Rename</button><button id="sDel">Delete</button><span class="msg" id="sUsed"></span></div>
-  <div id="form"></div>
+  <div class="bar"><b>Strategy</b><span class="hi" data-help="strategy">?</span><select id="sSel"></select><button id="sNew">New</button><button id="sDup">Duplicate</button><button id="sRen">Rename</button><button id="sDel">Delete</button><span class="msg" id="sUsed"></span></div>
+</div>
+
+<div class="pane on" id="edit">
   <div class="card">
-    <h3>Holiday / event multipliers (all apartments)</h3>
-    <div class="hint">Multiplier applied on top of the strategy result. 1.25 = +25%. Leave every apartment unticked to apply to all. Rows left completely empty are ignored.</div>
+    <h3>Notes <span class="hi" data-help="notes">?</span></h3>
+    <div class="row"><textarea class="notes" id="noteBox" placeholder="Add a note..."></textarea><button id="noteAdd" style="align-self:flex-start">+ Add note</button></div>
+    <div class="notelog" id="noteLog"></div>
+  </div>
+  <div id="form"></div>
+</div>
+
+<div class="pane" id="cal">
+  <div class="card">
+    <h3>Season bands <span class="hi" data-help="season">?</span></h3>
+    <div id="seasons"></div>
+    <button data-act="addSeason">+ Add season band</button>
+  </div>
+  <div class="card">
+    <h3>Holiday / event multipliers <span class="hi" data-help="events">?</span></h3>
     <div id="events"></div>
     <button data-act="addEvent">+ Add event</button>
   </div>
+  <div class="card">
+    <h3>Date overrides <span class="hi" data-help="overrides">?</span></h3>
+    <div class="row"><span class="row" id="ovApts"></span><label>From <input type="date" id="ovFrom"></label><label>To <input type="date" id="ovTo"></label><input type="number" id="ovPrice" placeholder="Price"><input type="text" id="ovNote" placeholder="Note (optional)"><button id="ovAdd">Set override</button><span class="msg" id="ovMsg"></span></div>
+    <div class="hint">Leave "To" blank to lock a single date. A locked range writes one row per night.</div>
+    <ul class="ovlist" id="ovList"></ul>
+    <h3 style="margin-top:12px">Price Setter locks <span class="hi" data-help="locks">?</span></h3>
+    <ul class="ovlist" id="lockList"></ul>
+  </div>
+  <div class="card">
+    <h3>Timezone</h3>
+    <div class="row"><label>Timezone <input type="text" id="tz" style="width:190px" placeholder="e.g. Africa/Johannesburg"></label><span class="hint">Decides what "today" and the current hour mean.</span></div>
+  </div>
+</div>
+
+<div class="pane" id="live">
+  <div class="card">
+    <h3>Engine <span class="hi" data-help="engine">?</span></h3>
+    <div class="chkrow"><input type="checkbox" id="engOn" data-p="t.enabled" data-t="c"><b>Engine on</b></div>
+    <div class="hint">Schedule: every hour for today and tomorrow, every day at 03:00 UTC for the rest of the horizon, and straight after any booking arrives, changes or is cancelled (that apartment only). Each apartment writes to Smoobu only if "Write to Smoobu" is ticked above; the others only log. Locked prices, overrides and booked nights are never overwritten. Test bookings are ignored.</div>
+    <div class="row"><button id="dryNow">Preview now (sends nothing)</button><button id="liveNow">Run now for live apartments</button><button id="liveRefresh">Refresh</button><span class="msg" id="liveMsg"></span></div>
+    <div class="hint">Preview uses your current draft and Smoobu's current prices. "Run now" uses the saved settings.</div>
+  </div>
+  <div class="card" id="prevCard" style="display:none"><h3>Preview: what would change right now</h3><div id="prevSum" class="hint"></div><div class="wrap"><table class="g" id="prevTbl"></table></div></div>
+  <div class="card"><h3>Recent runs</h3><div class="wrap"><table class="g" id="runTbl"></table></div></div>
+  <div class="card"><h3>Change log <span class="msg">click a row for the breakdown</span></h3><div class="wrap"><table class="g" id="logTbl"></table></div><pre id="logDetail">-</pre></div>
 </div>
 
 <div class="pane" id="sim">
-  <div class="banner" id="simBanner">Testing your draft. Press <b>Save as active</b> only when the grid looks right.</div>
   <div class="bar">
     <button id="saveBtn"><b>Save as active</b></button>
     <button id="discBtn">Discard changes</button>
@@ -87,23 +138,56 @@ pre{background:#f7f7f7;padding:8px;font-size:12px;overflow:auto;max-height:240px
   </div>
   <div class="bar">
     <span>Sim date: <b id="clock">-</b></span>
-    <button id="runBtn">Refresh preview</button>
-    <button id="backBtn">&#9664; -1 day</button>
-    <button id="fwdBtn">+1 day &#9654;</button>
-    <label>random bookings on +1 <input id="rand" type="number" value="3" min="0"></label>
   </div>
   <div class="bar">
-    <label>Jump to <input id="jumpDate" type="date"></label><button id="jumpBtn">Go</button><button id="todayBtn">Back to real today</button>
+    <label>Jump to <input id="jumpDate" type="date"></label><button id="jumpBtn">Go</button>
     <label>Days shown <input id="hz" type="number" min="1" max="365"></label>
+    <label>Sim hour (blank = now) <input id="simHour" type="number" min="0" max="23.99" step="any" style="width:70px"></label>
+    <label>Add <input id="rand" type="number" value="5" min="1" style="width:60px"> random test bookings</label><button id="randBtn">Add</button><button id="clrBtn">Remove all test bookings</button>
     <button id="recBtn">Record these prices in sim</button>
     <button id="resetBtn">Reset sim</button>
     <span class="msg" id="msg"></span>
   </div>
   <div class="wrap"><table class="g" id="tbl"></table></div>
-  <div style="margin-top:10px"><b>Breakdown</b> <span class="msg">click a price cell</span><pre id="detail">-</pre></div>
+  <div style="margin-top:10px"><b>Breakdown</b> <span class="msg">click a price cell — yellow outline = locked override, blue T = test booking (click it to remove)</span><pre id="detail">-</pre></div>
 </div>
+<div id="helpPop"></div>
 
 <script>
+// ### 0 --- shared help text, referenced by key so explanations live in one place
+const HELP={
+occupancy:'Share of the apartment\'s rooms booked on that night. Read a row as: "when the booked share is from X up to (not including) Y percent, add the Adjust %."',
+pace:'How fast that night is filling compared with what is normal for the same weekday and lead time. 100 = normal, 130 = filling 30% faster than normal. History window/min samples control how much past data is required before pace counts (too little history = adjustment 0).',
+hourly:'Applies only to tonight (lead time 0). From the start hour the price slides down evenly, reaching the full drop % at the end hour, then holds there. Hours use the 24h clock (12 = noon, 22 = 10pm) in the timezone set above. It adds into the same sum as the other factors, and the minimum-notice floor still stops it from going too low.',
+leadtime:'Days between today and the stay night. 0-2 is last minute — tighten this tier for tighter today/tomorrow control. Larger numbers are far in advance.',
+dow:'A flat percentage adjustment for each weekday, added into the same sum as the other factors.',
+tiers:'Blank From / Up to = no limit at that end (not zero). Tiers should not overlap; the first matching row wins top to bottom.',
+extras:'Orphan-gap: adjusts the price of a single free night stuck between two bookings. Negative % = discount to fill it, positive % = increase. Minimum notice: inside N days of the stay, price never drops below the floor. Max change: caps how far a price can move from its last run, in either direction.',
+live:'Off = dry run: the engine works out and logs the prices it would set but sends nothing to Smoobu. On = it overwrites that apartment\'s Smoobu prices by itself: hourly for today and tomorrow, daily for the rest, and right after a booking arrives or changes. Locked prices and overrides are always respected. The Engine switch on tab 4 must also be on.',
+engine:'Master switch. Off = nothing runs, not even dry runs. On = the hourly, daily and on-booking runs happen. Apartments without Write to Smoobu ticked only log what they would do. Runs use the saved settings, so press Save as active after changing this.',
+limits:'Base = starting price before any adjustment. Min / Max = the price can never leave this range, whatever the factors say. Spread % = every room gets its own random offset of up to plus or minus this %, picked fresh for each date (and kept the same when you refresh), so rooms and days do not all show the same price; 0 = identical prices.',
+season:'A recurring yearly date band (day and month only, no year) that adds a % into the same sum as the strategy factors. Same for every year. Tick specific apartments or leave all unticked to apply everywhere.',
+events:'A one-off date range (with year) that multiplies the final price, stacking on top of everything else. Use for a specific holiday or event, not a recurring season.',
+locks:'Created by the "Lock these prices" checkbox in Price Setter. Each is one listing on one date at the exact price you set there; automatic pricing never changes it. Delete the line to hand those dates back to automation.',
+overrides:'Locks one apartment\'s price for a date or date range. All its listings are set to exactly this price — no factors, spread, or clamp apply. The engine skips it entirely, like a booked night.',
+notes:'A log for what you tried on this strategy and why, and what you observed while watching it run. Kept with the strategy, so Duplicate carries the history forward.',
+strategy:'A strategy holds the demand-response rules (occupancy, pace, lead time, day of week) plus the extras. Several apartments can share one strategy; editing it changes all of them. Season, events and overrides are calendar-wide instead, so they never change when you switch an apartment\'s strategy.'
+};
+['occupancy','pace','leadtime'].forEach(k=>{HELP[k]+=' '+HELP.tiers;});
+function hi(key){return '<span class="hi" data-help="'+key+'">?</span>';}
+document.addEventListener('click',e=>{
+  const h=e.target.closest('.hi');
+  const pop=$('helpPop');
+  if(h){
+    pop.textContent=HELP[h.dataset.help]||'';
+    const r=h.getBoundingClientRect();
+    pop.style.display='block';
+    pop.style.top=Math.min(r.bottom+6,innerHeight-120)+'px';
+    pop.style.left=Math.min(r.left,innerWidth-296)+'px';
+    e.stopPropagation();
+  } else if(!e.target.closest('#helpPop')) pop.style.display='none';
+});
+
 // ### 1 --- config, state, helpers
 const WORKER_URL='https://smoobu-proxy-v2.ulnetconzept.workers.dev';
 const $=id=>document.getElementById(id);
@@ -112,33 +196,33 @@ function call(action,extra){
 }
 function say(id,t,c){const m=$(id);m.textContent=t;m.className='msg '+(c||'');}
 const clone=o=>JSON.parse(JSON.stringify(o));
-let apts=[],S={strategies:{},aptSettings:{},events:[],settings:{horizonDays:60}},saved='',sid='',last=null;
+let locks=[],apts=[],S={strategies:{},aptSettings:{},calendar:{seasons:[],events:[]},settings:{horizonDays:60}},saved='',sid='',last=null,overrides=[];
 const DEF={
 occupancy:{tiers:[{min:0,max:30,adj:-5},{min:30,max:60,adj:0},{min:60,max:85,adj:8},{min:85,max:null,adj:15}]},
 pace:{historyDays:90,minSamples:3,tiers:[{min:null,max:70,adj:-8},{min:70,max:130,adj:0},{min:130,max:null,adj:8}]},
 leadtime:{tiers:[{min:0,max:2,adj:-10},{min:2,max:14,adj:0},{min:14,max:45,adj:3},{min:45,max:null,adj:6}]},
-season:{bands:[{from:'06-15',to:'08-31',adj:15}]},
+hourly:{startHour:12,endHour:22,dropPct:10},
 dow:{days:{0:0,1:-3,2:-3,3:-3,4:0,5:8,6:8}}};
-const FNAME={
-occupancy:['Occupancy','Share of the apartment\'s rooms booked on that night. Read a row as: "when the booked share is from X up to (not including) Y percent, add the Adjust %".'],
-pace:['Booking pace','How fast that night is filling compared with what is normal for the same weekday and lead time. 100 = normal, 130 = filling 30% faster than normal.'],
-leadtime:['Lead time','Days between today and the stay night. 0-2 is last minute, larger numbers are far in advance.'],
-season:['Season','Date bands written as month-day. Use for high or low season.'],
-dow:['Day of week','A flat adjustment for each weekday.']};
+const FNAME={occupancy:'Occupancy',pace:'Booking pace',leadtime:'Lead time',hourly:'Hour of day (tonight only)',dow:'Day of week'};
+const YR='2024-';
+function mdToDate(md){return md?YR+md:'';}
+function dateToMd(v){return v?v.slice(5):null;}
 const DAYS=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 function newStrategy(name){
-  return {name:name,factors:clone(DEF),orphan:{enabled:true,discount:20},minNotice:{days:3,floor:38},maxChange:{pct:15}};
+  return {name:name,notes:[],factors:clone(DEF),orphan:{enabled:true,adj:10},minNotice:{days:3,floor:38},maxChange:{pct:15}};
 }
-function getP(o,p){return p.split('.').reduce((a,k)=>a==null?a:a[k],o);}
 function setP(o,path,v){
   const ks=path.split('.'),l=ks.pop();
   const t=ks.reduce((a,k)=>{if(a[k]==null)a[k]={};return a[k]},o);
   t[l]=v;
 }
-function draft(){return JSON.stringify({s:S.strategies,a:S.aptSettings,e:S.events,t:S.settings});}
+function draft(){return JSON.stringify({s:S.strategies,a:S.aptSettings,c:S.calendar,t:S.settings});}
+let simTimer=null;
 function refreshDirty(){
   const d=draft()!==saved,c=$('dirty');
   c.textContent=d?'unsaved draft':'saved';c.className='chip '+(d?'dirty':'clean');
+  clearTimeout(simTimer);
+  simTimer=setTimeout(()=>{if($('sim').classList.contains('on'))runSim(false);},700);
 }
 
 // ### 2 --- load saved data and seed a starting draft if nothing is stored yet
@@ -146,16 +230,23 @@ async function init(){
   const a=await call('getMeta',{key:'apartments'});apts=a.value||[];
   const st=await call('getMeta',{key:'pricing_strategies'});
   const ap=await call('getMeta',{key:'pricing_apartments'});
-  const ev=await call('getMeta',{key:'pricing_events'});
+  const cal=await call('getMeta',{key:'pricing_calendar'});
   const se=await call('getMeta',{key:'pricing_settings'});
-  S.strategies=st.value||{};S.aptSettings=ap.value||{};S.events=Array.isArray(ev.value)?ev.value:[];
+  S.strategies=st.value||{};S.aptSettings=ap.value||{};
+  S.calendar=cal.value&&(cal.value.seasons||cal.value.events)?cal.value:{seasons:[],events:[]};
   S.settings=Object.assign({horizonDays:60,enabled:false,dryRun:true},se.value||{});
   const fresh=!Object.keys(S.strategies).length;
   saved=fresh?'':draft();
   if(fresh)S.strategies.standard=newStrategy('Standard');
+  Object.values(S.strategies).forEach(s=>{if(!s.notes)s.notes=[];delete (s.factors||{}).season;if(s.orphan&&s.orphan.adj===undefined){s.orphan.adj=-(s.orphan.discount||0);delete s.orphan.discount;}});
   sid=Object.keys(S.strategies)[0];
   apts.forEach(x=>{if(!S.aptSettings[x.id])S.aptSettings[x.id]={strategyId:sid,base:45,min:35,max:70,spread:5};});
+  if(!S.settings.timezone)S.settings.timezone=Intl.DateTimeFormat().resolvedOptions().timeZone||'UTC';
+  $('tz').value=S.settings.timezone;
   $('hz').value=S.settings.horizonDays;
+  $('ovApts').innerHTML=apts.map(a=>'<label class="chk"><input type="checkbox" class="ovAptCk" value="'+a.id+'">'+a.name+'</label>').join('');
+  const ov=await call('getPriceOverrides',{});overrides=ov.overrides||[];
+  const lk=await call('getPriceLocks',{});locks=lk.locks||[];
   renderAll();refreshDirty();
   if(fresh)say('saveMsg','Starting draft loaded (nothing saved yet).');
 }
@@ -165,60 +256,90 @@ document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{
   document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('on',x===t));
   document.querySelectorAll('.pane').forEach(x=>x.classList.toggle('on',x.id===t.dataset.tab));
   if(t.dataset.tab==='sim')runSim(false);
+  if(t.dataset.tab==='live'){$('engOn').checked=!!S.settings.enabled;loadLive();}
 });
 
-// ### 4 --- render editor
+// ### 4 --- render strategy editor + apartments
 function num(path,val){return '<input type="number" step="any" data-p="'+path+'" data-t="n" value="'+(val==null?'':val)+'">';}
 function tierTable(f,c){
   return '<table class="f"><tr><th>From (incl.)</th><th>Up to (excl.)</th><th>Adjust %</th><th></th></tr>'+
   (c.tiers||[]).map((r,i)=>'<tr><td>'+num('s.factors.'+f+'.tiers.'+i+'.min',r.min)+'</td><td>'+num('s.factors.'+f+'.tiers.'+i+'.max',r.max)+'</td><td>'+num('s.factors.'+f+'.tiers.'+i+'.adj',r.adj)+'</td><td><button class="x" data-act="delTier" data-f="'+f+'" data-i="'+i+'">x</button></td></tr>').join('')+
-  '</table><button data-act="addTier" data-f="'+f+'">+ tier</button><div class="hint">Blank From / Up to = no limit at that end (not zero).</div>';
+  '</table><button data-act="addTier" data-f="'+f+'">+ tier</button>';
 }
 function factorCard(f,s){
   const c=s.factors[f],on=!!c;let b='';
   if(on){
-    if(f==='season')b='<table class="f"><tr><th>From (MM-DD)</th><th>To (MM-DD)</th><th>Adjust %</th><th></th></tr>'+(c.bands||[]).map((r,i)=>'<tr><td><input type="text" data-p="s.factors.season.bands.'+i+'.from" data-t="s" value="'+r.from+'"></td><td><input type="text" data-p="s.factors.season.bands.'+i+'.to" data-t="s" value="'+r.to+'"></td><td>'+num('s.factors.season.bands.'+i+'.adj',r.adj)+'</td><td><button class="x" data-act="delBand" data-i="'+i+'">x</button></td></tr>').join('')+'</table><button data-act="addBand">+ band</button><div class="hint">Bands may wrap the new year (12-15 to 01-05). First match wins.</div>';
+    if(f==='hourly')b='<div class="row"><label>Start dropping at hour '+num('s.factors.hourly.startHour',c.startHour)+'</label><label>Reach full drop at hour '+num('s.factors.hourly.endHour',c.endHour)+'</label><label>Total drop % '+num('s.factors.hourly.dropPct',c.dropPct)+'</label></div>';
     else if(f==='dow')b='<div class="dow">'+DAYS.map((d,i)=>'<div>'+d+'<br>'+num('s.factors.dow.days.'+i,(c.days||{})[i])+'</div>').join('')+'</div>';
-    else if(f==='pace')b='<div class="row"><label>History window (days) '+num('s.factors.pace.historyDays',c.historyDays==null?90:c.historyDays)+'</label><label>Min past samples '+num('s.factors.pace.minSamples',c.minSamples==null?3:c.minSamples)+'</label></div><div class="hint">Min past samples = how many past same-weekday dates must exist before pace counts. With fewer, pace adds 0.</div>'+tierTable(f,c);
+    else if(f==='pace')b='<div class="row"><label>History window (days) '+num('s.factors.pace.historyDays',c.historyDays==null?90:c.historyDays)+'</label><label>Min past samples '+num('s.factors.pace.minSamples',c.minSamples==null?3:c.minSamples)+'</label></div>'+tierTable(f,c);
     else b=tierTable(f,c);
   }
-  return '<div class="card'+(on?'':' off')+'"><label class="chk"><input type="checkbox" data-act="toggle" data-f="'+f+'"'+(on?' checked':'')+'><b>'+FNAME[f][0]+'</b></label><div class="hint">'+FNAME[f][1]+'</div><div class="body">'+b+'</div></div>';
+  return '<div class="card'+(on?'':' off')+'"><div class="chkrow"><input type="checkbox" data-act="toggle" data-f="'+f+'"'+(on?' checked':'')+'><b>'+FNAME[f]+'</b>'+hi(f)+'</div><div class="body">'+b+'</div></div>';
 }
+function fmtTs(ts){try{return new Date(ts).toLocaleString()}catch(e){return ts}}
 function renderAll(){
   $('sSel').innerHTML=Object.keys(S.strategies).map(k=>'<option value="'+k+'"'+(k===sid?' selected':'')+'>'+S.strategies[k].name+'</option>').join('');
   const used=apts.filter(a=>S.aptSettings[a.id]&&S.aptSettings[a.id].strategyId===sid).map(a=>a.name);
   $('sUsed').textContent=used.length?'Used by: '+used.join(', ')+' (editing changes all of them)':'Not used by any apartment';
   const opts=k=>'<option value="">(not priced)</option>'+Object.keys(S.strategies).map(x=>'<option value="'+x+'"'+(x===k?' selected':'')+'>'+S.strategies[x].name+'</option>').join('');
-  $('aptTbl').innerHTML='<tr><th>Apartment</th><th>Strategy</th><th>Base</th><th>Min</th><th>Max</th><th>Spread %</th></tr>'+apts.map(a=>{
+  $('aptTbl').innerHTML='<tr><th>Apartment</th><th>Strategy</th><th>Base</th><th>Min</th><th>Max</th><th>Spread %</th><th>Write to Smoobu'+hi('live')+'</th></tr>'+apts.map(a=>{
     const c=S.aptSettings[a.id],p='a.'+a.id+'.';
-    return '<tr><td>'+a.name+'</td><td><select data-p="'+p+'strategyId" data-t="s">'+opts(c.strategyId)+'</select></td><td>'+num(p+'base',c.base)+'</td><td>'+num(p+'min',c.min)+'</td><td>'+num(p+'max',c.max)+'</td><td>'+num(p+'spread',c.spread)+'</td></tr>';
-  }).join('')+'</table><div class="hint">Base = starting price. Min / Max = price can never go outside these. Spread % = each room gets a small fixed offset of up to this many % so rooms in one apartment differ slightly (0 = identical).</div>';
+    return '<tr><td>'+a.name+'</td><td><select data-p="'+p+'strategyId" data-t="s">'+opts(c.strategyId)+'</select></td><td>'+num(p+'base',c.base)+'</td><td>'+num(p+'min',c.min)+'</td><td>'+num(p+'max',c.max)+'</td><td>'+num(p+'spread',c.spread)+'</td><td style="text-align:center"><input type="checkbox" data-p="'+p+'live" data-t="c"'+(c.live?' checked':'')+'></td></tr>';
+  }).join('')+'</table>';
   const s=S.strategies[sid];
   let h='';
   if(s){
-    ['occupancy','pace','leadtime','season','dow'].forEach(f=>h+=factorCard(f,s));
+    ['occupancy','pace','leadtime','hourly','dow'].forEach(f=>h+=factorCard(f,s));
     const o=s.orphan||{},n=s.minNotice||{},m=s.maxChange||{};
-    h+='<div class="card"><h3>Extras</h3>'+
-    '<div class="row"><label class="chk"><input type="checkbox" data-p="s.orphan.enabled" data-t="c"'+(o.enabled?' checked':'')+'>Orphan-gap discount</label><label>Discount % '+num('s.orphan.discount',o.discount)+'</label></div><div class="hint">A single free night between two bookings gets this discount.</div>'+
-    '<div class="row"><label>Minimum notice: for stays within '+num('s.minNotice.days',n.days)+' days, the price never drops below '+num('s.minNotice.floor',n.floor)+'</label></div><div class="hint">Stops last-minute discounts from undercutting you. Leave days blank to switch off. Keep the floor between the apartment min and max.</div>'+
-    '<div class="row"><label>Max change per run (%) '+num('s.maxChange.pct',m.pct)+'</label></div><div class="hint">A price can move at most this % from its previous price in one pass.</div></div>';
+    h+='<div class="card"><h3>Extras'+hi('extras')+'</h3>'+
+    '<div class="row"><label class="chk"><input type="checkbox" data-p="s.orphan.enabled" data-t="c"'+(o.enabled?' checked':'')+'>Orphan-gap adjustment</label><label>Adjust % (negative = discount, positive = increase) '+num('s.orphan.adj',o.adj)+'</label></div>'+
+    '<div class="row"><label>Minimum notice: for stays within '+num('s.minNotice.days',n.days)+' days, the price never drops below '+num('s.minNotice.floor',n.floor)+'</label></div>'+
+    '<div class="row"><label>Max change per run (%) '+num('s.maxChange.pct',m.pct)+'</label></div></div>';
   }
   $('form').innerHTML=h;
-  $('events').innerHTML=S.events.map((e,i)=>'<div class="row"><input type="text" data-p="ev.'+i+'.name" data-t="s" placeholder="Name" value="'+(e.name||'')+'"><input type="date" data-p="ev.'+i+'.from" data-t="s" value="'+(e.from||'')+'"><input type="date" data-p="ev.'+i+'.to" data-t="s" value="'+(e.to||'')+'"><label>x '+num('ev.'+i+'.mult',e.mult)+'</label>'+
+  $('noteLog').innerHTML=(s.notes||[]).slice().reverse().map(n=>'<div><b>'+fmtTs(n.ts)+'</b> — '+n.text.replace(/</g,'&lt;')+'</div>').join('')||'<div class="hint">No notes yet.</div>';
+
+  $('seasons').innerHTML=S.calendar.seasons.map((r,i)=>'<div class="row"><input type="date" data-p="c.seasons.'+i+'.from" data-t="md" value="'+mdToDate(r.from)+'"> to <input type="date" data-p="c.seasons.'+i+'.to" data-t="md" value="'+mdToDate(r.to)+'"><label>Adjust % '+num('c.seasons.'+i+'.adj',r.adj)+'</label>'+
+    apts.map(a=>'<label class="chk"><input type="checkbox" data-act="seasonApt" data-i="'+i+'" data-a="'+a.id+'"'+((r.apartmentIds||[]).includes(a.id)?' checked':'')+'>'+a.name+'</label>').join('')+
+    '<span class="hint">(no apartment ticked = all)</span><button class="x" data-act="delSeason" data-i="'+i+'">x</button></div>').join('');
+  $('events').innerHTML=S.calendar.events.map((e,i)=>'<div class="row"><input type="text" data-p="c.events.'+i+'.name" data-t="s" placeholder="Name" value="'+(e.name||'')+'"><input type="date" data-p="c.events.'+i+'.from" data-t="s" value="'+(e.from||'')+'"><input type="date" data-p="c.events.'+i+'.to" data-t="s" value="'+(e.to||'')+'"><label>x '+num('c.events.'+i+'.mult',e.mult)+'</label>'+
     apts.map(a=>'<label class="chk"><input type="checkbox" data-act="evApt" data-i="'+i+'" data-a="'+a.id+'"'+((e.apartmentIds||[]).includes(a.id)?' checked':'')+'>'+a.name+'</label>').join('')+
     '<button class="x" data-act="delEvent" data-i="'+i+'">x</button></div>').join('');
+  renderOverrides();
+}
+function groupOverrides(){
+  const sorted=overrides.slice().sort((a,b)=>a.apartment_id===b.apartment_id?(a.date<b.date?-1:1):(a.apartment_id<b.apartment_id?-1:1));
+  const groups=[];
+  sorted.forEach(o=>{
+    const g=groups[groups.length-1];
+    if(g&&g.apartment_id===o.apartment_id&&g.price===o.price&&g.note===o.note&&addDaysStr(g.to,1)===o.date){g.to=o.date;}
+    else groups.push({apartment_id:o.apartment_id,from:o.date,to:o.date,price:o.price,note:o.note});
+  });
+  return groups;
+}
+function addDaysStr(iso,n){const d=new Date(iso+'T00:00:00Z');d.setUTCDate(d.getUTCDate()+n);return d.toISOString().slice(0,10);}
+function renderOverrides(){
+  const nameOf=id=>{const a=apts.find(x=>x.id===id);return a?a.name:id;};
+  const groups=groupOverrides();
+  const lg=[];
+  locks.forEach(o=>{const g=lg[lg.length-1];if(g&&g.listing_id===o.listing_id&&g.price===o.price&&addDaysStr(g.to,1)===o.date)g.to=o.date;else lg.push({listing_id:o.listing_id,from:o.date,to:o.date,price:o.price});});
+  const lockName=id=>{const a=apts.find(x=>x.listingIds.map(String).includes(String(id)));return (a?a.name+' / ':'')+id;};
+  $('lockList').innerHTML=lg.length?lg.map(o=>'<li><b>'+o.from+(o.to!==o.from?' to '+o.to:'')+'</b> — '+lockName(o.listing_id)+' — locked at '+o.price+' <button class="x" data-act="delLock" data-l="'+o.listing_id+'" data-f="'+o.from+'" data-tt="'+o.to+'">x</button></li>').join(''):'<div class="hint">No Price Setter locks.</div>';
+  $('ovList').innerHTML=groups.length?groups.map(o=>'<li><b>'+o.from+(o.to!==o.from?' to '+o.to:'')+'</b> — '+nameOf(o.apartment_id)+' — locked at '+o.price+(o.note?' — '+o.note.replace(/</g,'&lt;'):'')+' <button class="x" data-act="delOv" data-a="'+o.apartment_id+'" data-f="'+o.from+'" data-tt="'+o.to+'">x</button></li>').join(''):'<div class="hint">No overrides set.</div>';
 }
 
-// ### 5 --- input and click handling (all edits stay in the draft)
-function root(){return {s:S.strategies[sid],a:S.aptSettings,ev:S.events};}
+// ### 5 --- input and click handling (strategy/apartment/calendar edits stay in the draft)
+function root(){return {s:S.strategies[sid],a:S.aptSettings,c:S.calendar,t:S.settings};}
 function onEdit(t){
   const path=t.dataset.p;
   if(!path)return;
-  const v=t.dataset.t==='c'?t.checked:t.dataset.t==='n'?(t.value===''?null:Number(t.value)):t.value;
+  const v=t.dataset.t==='c'?t.checked:t.dataset.t==='n'?(t.value===''?null:Number(t.value)):t.dataset.t==='md'?dateToMd(t.value):t.value;
   setP(root(),path,v);
   refreshDirty();
   if(path.endsWith('strategyId'))renderAll();
 }
+$('tz').oninput=()=>{S.settings.timezone=$('tz').value.trim();refreshDirty();};
+$('simHour').onchange=()=>runSim(false);
 document.addEventListener('input',e=>onEdit(e.target));
 document.addEventListener('change',e=>{if(e.target.tagName==='SELECT'&&e.target.dataset.p)onEdit(e.target);});
 $('sSel').onchange=()=>{sid=$('sSel').value;renderAll();};
@@ -229,15 +350,33 @@ document.addEventListener('click',e=>{
   if(a==='toggle'){if(t.checked)s.factors[f]=clone(DEF[f]);else delete s.factors[f];}
   else if(a==='addTier')s.factors[f].tiers.push({min:null,max:null,adj:0});
   else if(a==='delTier')s.factors[f].tiers.splice(i,1);
-  else if(a==='addBand')s.factors.season.bands.push({from:'01-01',to:'01-31',adj:0});
-  else if(a==='delBand')s.factors.season.bands.splice(i,1);
-  else if(a==='addEvent')S.events.push({name:'',from:'',to:'',mult:1.2,apartmentIds:[]});
-  else if(a==='delEvent')S.events.splice(i,1);
-  else if(a==='evApt'){
-    const ids=S.events[i].apartmentIds||(S.events[i].apartmentIds=[]);
+  else if(a==='addSeason'){S.calendar.seasons.push({from:'01-01',to:'01-31',adj:0,apartmentIds:[]});}
+  else if(a==='delSeason')S.calendar.seasons.splice(i,1);
+  else if(a==='seasonApt'){
+    const ids=S.calendar.seasons[i].apartmentIds||(S.calendar.seasons[i].apartmentIds=[]);
     const k=ids.indexOf(t.dataset.a);
     if(t.checked&&k<0)ids.push(t.dataset.a);else if(!t.checked&&k>=0)ids.splice(k,1);
     refreshDirty();return;
+  }
+  else if(a==='addEvent')S.calendar.events.push({name:'',from:'',to:'',mult:1.2,apartmentIds:[]});
+  else if(a==='delEvent')S.calendar.events.splice(i,1);
+  else if(a==='evApt'){
+    const ids=S.calendar.events[i].apartmentIds||(S.calendar.events[i].apartmentIds=[]);
+    const k=ids.indexOf(t.dataset.a);
+    if(t.checked&&k<0)ids.push(t.dataset.a);else if(!t.checked&&k>=0)ids.splice(k,1);
+    refreshDirty();return;
+  }
+  else if(a==='delLock'){
+    const from=t.dataset.f,to=t.dataset.tt,l=t.dataset.l;
+    call('setPriceLocks',{listingId:l,from:from,to:to,price:null}).then(()=>{locks=locks.filter(o=>!(String(o.listing_id)===l&&o.date>=from&&o.date<=to));renderOverrides();});
+    return;
+  }
+  else if(a==='delOv'){
+    const from=t.dataset.f,to=t.dataset.tt;
+    call('setPriceOverride',{apartmentId:t.dataset.a,from:from,to:to,price:null}).then(()=>{
+      overrides=overrides.filter(o=>!(o.apartment_id===t.dataset.a&&o.date>=from&&o.date<=to));renderOverrides();
+    });
+    return;
   }
   else return;
   refreshDirty();renderAll();
@@ -261,40 +400,64 @@ $('sDel').onclick=()=>{
   if(!confirm('Delete strategy "'+S.strategies[sid].name+'"?'))return;
   delete S.strategies[sid];sid=Object.keys(S.strategies)[0];refreshDirty();renderAll();
 };
+$('noteAdd').onclick=()=>{
+  const t=$('noteBox').value.trim();if(!t)return;
+  S.strategies[sid].notes.push({ts:new Date().toISOString(),text:t});
+  $('noteBox').value='';refreshDirty();renderAll();
+};
 
-// ### 6 --- simulator calls (always send the draft)
-function simBody(x){return Object.assign({strategies:S.strategies,aptSettings:S.aptSettings,events:S.events.filter(e=>e.from&&e.to&&e.mult),days:Number($('hz').value)||60},x||{});}
+// ### 6 --- date overrides: saved immediately (not part of the draft, since it's a lock, not a strategy setting)
+$('ovAdd').onclick=async()=>{
+  const ids=[...document.querySelectorAll('.ovAptCk:checked')].map(x=>x.value),from=$('ovFrom').value,to=$('ovTo').value||from,price=$('ovPrice').value,note=$('ovNote').value;
+  if(!ids.length){say('ovMsg','Tick at least one property','warn');return}
+  if(!from||!price){say('ovMsg','Pick a date and a price','warn');return}
+  if(to<from){say('ovMsg','"To" cannot be before "From"','warn');return}
+  let bad='';
+  for(const aptId of ids){
+    const r=await call('setPriceOverride',{apartmentId:aptId,from:from,to:to,price:Number(price),note:note});
+    if(!r.success){bad=r.error||'Failed to save';break;}
+    overrides=overrides.filter(o=>!(o.apartment_id===aptId&&o.date>=from&&o.date<=to));
+    for(let d=from;d<=to;d=addDaysStr(d,1))overrides.push({apartment_id:aptId,date:d,price:Number(price),note:note});
+  }
+  overrides.sort((a,b)=>a.date<b.date?-1:1);
+  renderOverrides();
+  if(bad)say('ovMsg',bad,'warn');
+  else{say('ovMsg','Override set for '+ids.length+' propert'+(ids.length>1?'ies':'y')+'. It applies in the simulator now and on the next live run.','ok');$('ovPrice').value='';$('ovNote').value='';$('ovTo').value='';}
+};
+
+// ### 7 --- simulator calls (always send the draft)
+function simBody(x){return Object.assign({strategies:S.strategies,aptSettings:S.aptSettings,calendar:S.calendar,days:Number($('hz').value)||60,timezone:S.settings.timezone,hour:$('simHour').value===''?null:Number($('simHour').value)},x||{});}
 async function runSim(persist){
   say('msg','Running...');
   const r=await call('simulatePricing',simBody({persist:persist}));
   show(r);say('msg',persist?'Recorded '+r.changes+' price changes in sim history':'Preview of your draft (nothing saved)');
 }
-async function step(d){
-  say('msg','Stepping...');
-  const r=await call('simulateStep',simBody({stepDays:d,addRandom:d>0?Number($('rand').value)||0:0}));
-  show(r);say('msg','Moved '+(d>0?'forward':'back')+' one day'+(d>0?', random bookings added':'')+'; prices recorded in sim history');
+async function addRandom(){
+  say('msg','Adding...');
+  const r=await call('simulateStep',simBody({stepDays:0,addRandom:Number($('rand').value)||0}));
+  show(r);say('msg','Added random test bookings (dated to the sim date); pace and occupancy now reflect them');
 }
-$('runBtn').onclick=()=>runSim(false);
 $('recBtn').onclick=()=>runSim(true);
-$('fwdBtn').onclick=()=>step(1);
-$('backBtn').onclick=()=>step(-1);
+$('randBtn').onclick=addRandom;
+$('clrBtn').onclick=async()=>{await call('clearTestBookings');runSim(false);say('msg','Test bookings removed');};
+function realToday(){try{return new Intl.DateTimeFormat('en-CA',{timeZone:S.settings.timezone||'UTC'}).format(new Date());}catch(e){return new Date().toISOString().slice(0,10);}}
 $('jumpBtn').onclick=async()=>{
-  if(!$('jumpDate').value){say('msg','Pick a date first','warn');return}
-  show(await call('simulateSetDate',simBody({date:$('jumpDate').value})));say('msg','Jumped. Bookings the sim generated after that date are hidden.');
+  const d=$('jumpDate').value;
+  if(!d||d===realToday()){show(await call('simulateSetDate',simBody()));say('msg','Showing the real today');return}
+  show(await call('simulateSetDate',simBody({date:d})));say('msg','Jumped. Bookings the sim generated after that date are hidden.');
 };
-$('todayBtn').onclick=async()=>{show(await call('simulateSetDate',simBody()));say('msg','Back to real today');};
 $('resetBtn').onclick=async()=>{
-  if(!confirm('Delete all sim recorded prices, generated bookings and reset the date?'))return;
+  if(!confirm('Delete all sim recorded prices, generated bookings and reset the date? (overrides are kept)'))return;
   await call('resetSim');await runSim(false);say('msg','Sim reset');
 };
 
-// ### 7 --- grid
+// ### 8 --- grid
 function show(r){
   if(r.error){say('msg',r.error,'warn');return}
   last=r;$('clock').textContent=r.today;$('jumpDate').value=r.today;
   const dates=[...new Set(r.days.map(d=>d.date))].sort();
   const by={};r.days.forEach(d=>{(by[d.apartmentId]=by[d.apartmentId]||{})[d.date]=d});
-  let h='<tr><th class="name">Listing</th>'+dates.map(d=>'<th>'+d.slice(5)+'</th>').join('')+'</tr>';
+  let h='<tr><th class="name">Listing</th>'+dates.map(d=>'<th>'+DAYS[new Date(d+'T00:00:00Z').getUTCDay()]+'<br>'+d.slice(5)+'</th>').join('')+'</tr>';
   apts.forEach(a=>{
     if(!by[a.id])return;
     h+='<tr class="apt"><td colspan="'+(dates.length+1)+'">'+a.name+'</td></tr>';
@@ -302,32 +465,37 @@ function show(r){
       h+='<tr><td class="name">'+id+'</td>'+dates.map(d=>{
         const day=by[a.id][d],l=day&&day.listings.find(x=>x.id===String(id));
         if(!l)return'<td></td>';
-        if(l.status==='booked')return'<td class="b">B</td>';
-        return'<td class="c'+(l.orphan?' orph':'')+(l.capped?' cap':'')+'" data-a="'+a.id+'" data-d="'+d+'" data-l="'+id+'">'+l.price+'</td>';
+        if(l.status==='booked')return l.test?'<td class="b bt" data-tb="'+l.test+'" title="Test booking - click to remove">T</td>':'<td class="b">B</td>';
+        const cls=l.status==='override'?' ov':(l.orphan?' orph':'')+(l.capped?' cap':'');
+        return'<td class="c'+cls+'" data-a="'+a.id+'" data-d="'+d+'" data-l="'+id+'">'+l.price+'</td>';
       }).join('')+'</tr>';
     });
   });
   if(!r.days.length)h='<tr><td style="padding:12px">No apartment has a strategy assigned. Pick one in tab 1.</td></tr>';
   $('tbl').innerHTML=h;
 }
-$('tbl').onclick=e=>{
+$('tbl').onclick=async e=>{
+  const tb=e.target.closest('td.bt');
+  if(tb){if(confirm('Remove this test booking?')){await call('deleteSimBooking',{id:tb.dataset.tb});runSim(false);}return;}
   const t=e.target.closest('td.c');if(!t||!last)return;
   document.querySelectorAll('td.sel').forEach(x=>x.classList.remove('sel'));t.classList.add('sel');
   const day=last.days.find(d=>d.apartmentId===t.dataset.a&&d.date===t.dataset.d);
   const l=day.listings.find(x=>x.id===t.dataset.l);
   const c=S.aptSettings[day.apartmentId]||{};
+  if(l.status==='override'){$('detail').textContent='Date '+day.date+'\nLocked '+(l.lock?'by Price Setter (this listing)':'override (whole apartment)')+' price = '+l.price+'\nAll strategy math, spread, orphan discount and min/max clamp are skipped for this date.';return}
   $('detail').textContent=
 'Date '+day.date+' (lead '+day.lead+'d)  |  limits '+c.min+' to '+c.max+'\n'+
 'Base '+c.base+'\n'+
 Object.keys(day.factors).map(k=>'  '+k+': '+(day.factors[k]>=0?'+':'')+day.factors[k]+'%').join('\n')+'\n'+
 'Sum '+day.sum+'%  x event '+day.eventMult+'  = '+day.mid+'\n'+
-'Listing '+l.id+': spread '+l.spread+'%, orphan -'+l.orphan+'%'+(l.capped?', capped by max-change (last '+l.prev+')':'')+'\n'+
+'Listing '+l.id+': spread '+l.spread+'%, orphan '+(l.orphan>=0?'+':'')+l.orphan+'%'+(l.capped?', capped by max-change (last '+l.prev+')':'')+'\n'+
 'Final (after notice floor + min/max) = '+l.price;
 };
 
-// ### 8 --- validate and save (only from the simulator tab)
+// ### 9 --- validate and save (only from the simulator tab; overrides already saved live, not part of this)
 function check(){
-  S.events=S.events.filter(e=>e.name||e.from||e.to);
+  S.calendar.events=S.calendar.events.filter(e=>e.name||e.from||e.to);
+  S.calendar.seasons=S.calendar.seasons.filter(s=>s.from||s.to);
   for(const a of apts){
     const c=S.aptSettings[a.id];
     if(!c.strategyId)continue;
@@ -338,22 +506,35 @@ function check(){
     const s=S.strategies[k];
     for(const f of Object.keys(s.factors)){
       for(const r of (s.factors[f].tiers||[]))if(typeof r.adj!=='number')return s.name+': every tier in '+f+' needs an Adjust %';
-      for(const r of (s.factors[f].bands||[]))if(!/^\d\d-\d\d$/.test(r.from)||!/^\d\d-\d\d$/.test(r.to)||typeof r.adj!=='number')return s.name+': season rows need dates like 06-15 and an Adjust %';
     }
     const mn=s.minNotice;
     if(mn&&mn.days&&typeof mn.floor!=='number')return s.name+': minimum notice needs a floor price';
   }
-  for(const e of S.events)if(!e.from||!e.to||e.to<e.from||typeof e.mult!=='number')return 'Each event needs from/to dates (to not before from) and a multiplier';
+  for(const b of S.calendar.seasons)if(!/^\d\d-\d\d$/.test(b.from)||!/^\d\d-\d\d$/.test(b.to)||typeof b.adj!=='number')return 'Every season band needs dates like 06-15 and an Adjust %';
+  for(const e of S.calendar.events)if(!e.from||!e.to||e.to<e.from||typeof e.mult!=='number')return 'Each event needs from/to dates (to not before from) and a multiplier';
   return '';
 }
 $('saveBtn').onclick=async()=>{
   const err=check();
   if(err){say('saveMsg',err,'warn');return}
+  let was={a:{},t:{}};try{if(saved)was=JSON.parse(saved);}catch(e){}
+  const goLive=apts.filter(a=>S.aptSettings[a.id].live&&!(was.a&&was.a[a.id]&&was.a[a.id].live)).map(a=>a.name);
+  const engNew=S.settings.enabled&&!(was.t&&was.t.enabled);
+  if((goLive.length||engNew)&&!confirm((goLive.length?goLive.join(' and ')+' will start writing REAL prices to Smoobu automatically (hourly, daily and on every booking).':'')+(engNew?String.fromCharCode(10,10)+'The pricing engine will be switched ON.':'')+String.fromCharCode(10,10)+'Continue?'))return;
+  const w=[];
+  apts.forEach(a=>{
+    const c=S.aptSettings[a.id],s=c&&c.strategyId&&S.strategies[c.strategyId],mn=s&&s.minNotice;
+    if(!mn||!mn.days||typeof mn.floor!=='number')return;
+    if(mn.floor<c.min)w.push(a.name+': notice floor '+mn.floor+' is below its min '+c.min+', so the floor has no effect.');
+    else if(mn.floor>c.max)w.push(a.name+': notice floor '+mn.floor+' is above its max '+c.max+', so last-minute dates will be capped at '+c.max+'.');
+    else if(mn.floor>c.base)w.push(a.name+': notice floor '+mn.floor+' is above its base '+c.base+', so dates within '+mn.days+' days can never be priced below '+mn.floor+'.');
+  });
+  if(w.length&&!confirm('Check these before saving:'+String.fromCharCode(10,10)+w.join(String.fromCharCode(10))+String.fromCharCode(10,10)+'Save anyway?'))return;
   S.settings.horizonDays=Number($('hz').value)||60;
   const rs=await Promise.all([
     call('setMeta',{key:'pricing_strategies',value:S.strategies}),
     call('setMeta',{key:'pricing_apartments',value:S.aptSettings}),
-    call('setMeta',{key:'pricing_events',value:S.events}),
+    call('setMeta',{key:'pricing_calendar',value:S.calendar}),
     call('setMeta',{key:'pricing_settings',value:S.settings})]);
   if(rs.every(r=>r.success)){saved=draft();refreshDirty();say('saveMsg','Saved as active.','ok');renderAll();}
   else say('saveMsg','Save failed, try again','warn');
@@ -362,6 +543,35 @@ $('discBtn').onclick=async()=>{
   if(draft()===saved){say('saveMsg','No changes to discard');return}
   if(!confirm('Throw away all unsaved edits and reload the saved settings?'))return;
   await init();runSim(false);say('saveMsg','Reloaded saved settings');
+};
+
+// ### 10 --- live tab: status, preview and manual runs
+function fmtT(ts){try{return new Date(ts).toLocaleString()}catch(e){return ts}}
+async function loadLive(){
+  const r=await call('getPricingStatus',{});
+  if(r.error){say('liveMsg',r.error,'warn');return}
+  $('runTbl').innerHTML='<tr><th>Time</th><th>Trigger</th><th>Apartment</th><th>Mode</th><th>Planned</th><th>Logged / applied</th><th>Failed</th></tr>'+(r.runs.length?r.runs.map(x=>x.apartments.map(a=>'<tr><td>'+fmtT(x.ts)+'</td><td>'+x.trigger+'</td><td>'+a.name+'</td><td>'+a.mode+'</td><td>'+a.planned+'</td><td>'+(a.mode==='live'?a.applied:a.logged)+'</td><td>'+(a.failed||0)+'</td></tr>').join('')).join(''):'<tr><td colspan="7" style="padding:10px">No runs yet.</td></tr>');
+  window.logRows=r.log;
+  $('logTbl').innerHTML='<tr><th>Time</th><th>Mode</th><th>Listing</th><th>Date</th><th>Old</th><th>New</th><th>Status</th></tr>'+(r.log.length?r.log.map((x,i)=>'<tr data-i="'+i+'" style="cursor:pointer"><td>'+fmtT(x.ts)+'</td><td>'+x.mode+'</td><td>'+x.listing_id+'</td><td>'+x.date+'</td><td>'+(x.old_price==null?'-':x.old_price)+'</td><td>'+x.new_price+'</td><td>'+x.status+(x.error?' ('+x.error+')':'')+'</td></tr>').join(''):'<tr><td colspan="7" style="padding:10px">Nothing logged yet.</td></tr>');
+}
+$('logTbl').onclick=e=>{const tr=e.target.closest('tr[data-i]');if(!tr)return;const x=window.logRows[tr.dataset.i];let b={};try{b=JSON.parse(x.breakdown)}catch(err){}$('logDetail').textContent=x.date+'  listing '+x.listing_id+'  '+(x.old_price==null?'-':x.old_price)+' -> '+x.new_price+String.fromCharCode(10)+JSON.stringify(b,null,1);};
+$('liveRefresh').onclick=loadLive;
+$('dryNow').onclick=async()=>{
+  say('liveMsg','Working out the preview...');
+  const r=await call('runPricing',{scope:'all',preview:true,forceDry:true,draft:{settings:Object.assign({},S.settings,{horizonDays:Number($('hz').value)||60}),strategies:S.strategies,aptSettings:S.aptSettings,calendar:S.calendar}});
+  if(r.error||r.skipped){say('liveMsg',r.error||r.skipped,'warn');return}
+  $('prevCard').style.display='block';
+  $('prevSum').textContent=r.total+' price changes would be sent ('+r.perApartment.map(a=>a.name+': '+a.planned).join(', ')+'). '+r.closed+' closed or booked nights skipped. Showing the first '+r.sample.length+'.';
+  $('prevTbl').innerHTML='<tr><th>Listing</th><th>Date</th><th>Smoobu now</th><th>New price</th><th>Type</th></tr>'+r.sample.map(x=>'<tr><td>'+x.listingId+'</td><td>'+x.date+'</td><td>'+(x.old==null?'-':x.old)+'</td><td>'+x.price+'</td><td>'+(x.status==='override'?'locked':'calculated')+'</td></tr>').join('');
+  say('liveMsg','Preview ready. Nothing was sent to Smoobu.','ok');
+};
+$('liveNow').onclick=async()=>{
+  if(!confirm('This runs now using the SAVED settings and writes real prices to Smoobu for every apartment that has "Write to Smoobu" ticked. Continue?'))return;
+  say('liveMsg','Running...');
+  const r=await call('runPricing',{scope:'all',forceDry:false});
+  if(r.error||r.skipped){say('liveMsg',r.error||r.skipped,'warn');return}
+  say('liveMsg','Run finished: '+r.apartments.map(a=>a.name+' '+a.mode+' '+(a.mode==='live'?a.applied+' sent, '+a.failed+' failed':a.logged+' logged')).join('; '),'ok');
+  loadLive();
 };
 init();
 </script>

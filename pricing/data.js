@@ -10,13 +10,14 @@ export function buildData(rows, today) {
   rows.forEach(r => {
     const u = String(r.m_apartment_id);
     if (!by.has(u)) by.set(u, []);
-    by.get(u).push({ from: r.m_arrival, to: r.m_departure, created: String(r.created_at || '').slice(0, 10), block: isBlock(r) });
+    by.get(u).push({ from: r.m_arrival, to: r.m_departure, created: String(r.created_at || '').slice(0, 10), block: isBlock(r), id: String(r.id) });
   });
   const list = u => by.get(String(u)) || [];
   const cache = new Map();
 
 // ### 2 --- availability and gap views
   const isBooked = (u, d) => list(u).some(b => b.from <= d && d < b.to);
+  const testId = (u, d) => { const b = list(u).find(x => x.from <= d && d < x.to); return b && b.id.startsWith('simgen-') ? b.id : null; };
   const isReal = (u, d) => list(u).some(b => !b.block && b.from <= d && d < b.to);
   const isOrphan = (u, d) => !isBooked(u, d) && isReal(u, addDays(d, -1)) && isReal(u, addDays(d, 1));
 
@@ -49,5 +50,5 @@ export function buildData(rows, today) {
     if (!e) return null;
     return fillAt(apt, d, lead) / e * 100;
   };
-  return { isBooked, isOrphan, occupancy, paceRatio, fillAt };
+  return { isBooked, testId, isOrphan, occupancy, paceRatio, fillAt };
 }

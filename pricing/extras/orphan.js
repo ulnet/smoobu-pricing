@@ -1,4 +1,5 @@
-// ### 1 --- orphan gap discount: lone open night between two real bookings
+// ### 1 --- orphan gap adjustment: signed % (negative discounts, positive raises) for a lone open night between two real bookings
 export default function orphan(cfg, isOrphan) {
-  return cfg && cfg.enabled && isOrphan ? Number(cfg.discount) || 0 : 0;
+  if (!cfg || !cfg.enabled || !isOrphan) return 0;
+  return cfg.adj !== undefined ? Number(cfg.adj) || 0 : -(Number(cfg.discount) || 0);
 }

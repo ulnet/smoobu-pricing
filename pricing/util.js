@@ -19,9 +19,10 @@ export function tierAdj(tiers, v) {
   return t ? Number(t.adj) || 0 : 0;
 }
 
-// ### 3 --- stable per-listing offset in [-1, 1] (FNV-1a hash of the id)
+// ### 3 --- stable pseudo-random value in [-1, 1] for a string (FNV-1a plus avalanche mix); same input always gives the same value
 export function seededUnit(str) {
   let h = 2166136261;
   for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
+  h ^= h >>> 16; h = Math.imul(h, 2246822507); h ^= h >>> 13; h = Math.imul(h, 3266489909); h ^= h >>> 16;
   return ((h >>> 0) / 4294967295) * 2 - 1;
 }
