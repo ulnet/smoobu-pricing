@@ -1,0 +1,9 @@
+name = "smoobu-console"
+main = "worker.js"
+compatibility_date = "2026-09-01"
+preview_urls = false
+
+[[d1_databases]]
+binding = "DB"
+database_name = "smoobu_console_db"
+database_id = "e2875bf1-53d4-4890-a628-23024af9b5be"
