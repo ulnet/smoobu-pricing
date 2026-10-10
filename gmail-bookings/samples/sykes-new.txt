@@ -1,0 +1,37 @@
+FROM: Sykes Holiday Cottages
+SUBJECT: Sykes Holiday Cottages Reservation for 2B Granville Road from Monday 12th October 2026 to Saturday 17th October 2026
+---
+Dear Mr Duke Nwikina,
+
+You have a new booking, the booking reference is OC4TA-26-SA
+
+
+Booking Information
+
+Property name:	2B Granville Road - Ref: 1208359
+Check in:	Monday 12th October 2026 at 3:00 PM
+Check out:	Saturday 17th October 2026 at 10:00 AM
+Nights:	5
+
+Guest information
+
+Guest name:	Mr James Brown (1113811224)
+Contact no:	0000000
+Post code:	0000
+Email address:	jbrown.699321@guest.booking.com
+
+Party details
+
+Adults:	2
+Children:	0
+Teenagers:	0
+Infants:	0
+Pets:	0
+
+Requests
+
+No feature requests were made.
+
+Kind regards,
+
+Sykes Holiday Cottages
