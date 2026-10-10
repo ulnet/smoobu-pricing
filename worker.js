@@ -66,7 +66,6 @@ function pricingDeps(env) {
     telegram: m => sendTelegramAlert(env, m)
   };
 }
-const GMAIL_TRIGGERS = new Set(['newReservation', 'updateReservation', 'addSimBooking', 'updateSimBooking', 'syncLiveBookings', 'restoreBooking']);
 const PRICE_TRIGGERS = new Set(['newReservation', 'updateReservation', 'cancelReservation', 'deleteReservation', 'addSimBooking', 'updateSimBooking', 'deleteSimBooking']);
 function listingOf(payload) {
   const d = payload.data || {};
@@ -766,7 +765,6 @@ export default {
         else if (simActions[action]) result = await simActions[action](env, payload);
         else result = { error: 'Unknown or missing action' };
         if (PRICE_TRIGGERS.has(action) && result && !result.error) ctx.waitUntil(priceAfterBooking(env, pricingDeps(env), listingOf(payload)).catch(() => {}));
-        if (GMAIL_TRIGGERS.has(action) && env.GMAIL && result && !result.error) ctx.waitUntil(Promise.resolve().then(() => env.GMAIL.sync()).catch(() => {}));
         return jsonResponse(result);
       }
 
