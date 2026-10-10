@@ -81,14 +81,14 @@
     <div id="pr-rangeEmpty" class="sub">No ranges added yet.</div>
 
     <div class="radio-group" style="margin-top:12px;">
-      <label class="radio-opt active"><input type="radio" name="pr-type" value="flat" checked>Flat</label>
+      <label class="radio-opt"><input type="radio" name="pr-type" value="flat">Flat</label>
       <label class="radio-opt"><input type="radio" name="pr-type" value="sequence">Sequence</label>
-      <label class="radio-opt"><input type="radio" name="pr-type" value="random">Random</label>
+      <label class="radio-opt active"><input type="radio" name="pr-type" value="random" checked>Random</label>
       <label class="radio-opt"><input type="radio" name="pr-type" value="randomplus">Random+</label>
     </div>
-    <div class="type-panel active" data-panel="flat"><label>Price / night (all listings)<input type="number" id="pr-flat-price" placeholder="110"></label></div>
+    <div class="type-panel" data-panel="flat"><label>Price / night (all listings)<input type="number" id="pr-flat-price" placeholder="110"></label></div>
     <div class="type-panel" data-panel="sequence"><label>Start price (+1 per listing)<input type="number" id="pr-seq-start" placeholder="38"></label></div>
-    <div class="type-panel" data-panel="random randomplus">
+    <div class="type-panel active" data-panel="random randomplus">
       <div class="field-row"><label>Min<input type="number" id="pr-rand-min" placeholder="90"></label><label>Max<input type="number" id="pr-rand-max" placeholder="150"></label></div>
     </div>
     <div id="pr-formErr" style="color:var(--danger);font-size:11px;min-height:14px;"></div>
@@ -97,6 +97,7 @@
     <div id="pr-previewSection" style="display:none;margin-top:10px;">
       <table><thead><tr><th></th><th>Property</th><th>Listing</th><th>Price</th></tr></thead><tbody id="pr-previewBody"></tbody></table>
       <div class="sub">Uncheck to exclude. Applies across all ranges above for that listing.</div>
+      <label style="display:block;margin:8px 0;font-size:13px"><input type="checkbox" id="pr-lock" checked> Lock these prices (automatic pricing will leave these listings and dates alone)</label>
       <button class="warn" id="pr-applyBtn">Apply</button>
     </div>
   </div>
@@ -165,8 +166,10 @@ function refreshApartments(){
     callWorker('getMeta',{key:'apartments'}).then(res=>res.value||[])
   ]).then(([apts,props])=>{
     apartments=apts;properties=props;
+    selectedIds=apartments.map(a=>a.id);
     renderApartments();
-    logEntry('refresh listings','ok',apartments);
+    const lines=apartments.map(a=>{const pr=resolveProperty(a.id);return a.id+' \u2014 '+a.name+'   ['+(pr?pr.name:'(unassigned)')+']';});
+    logEntry('refresh listings','ok',apartments.length+' listings loaded, all selected:\n'+lines.join('\n'));
   }).catch(err=>logEntry('refresh listings','err',err.message));
 }
 function toggleGroup(ids,shouldSelect){
@@ -363,8 +366,13 @@ document.getElementById('pr-applyBtn').onclick=()=>{
 };
 
 // ### 8 --- rate call, with 1 auto-retry then a manual Retry button on the log entry
+function resFail(res){
+  if(res.error)return res.error;
+  if(res.status&&(res.status<200||res.status>=300)){const b=res.body||{};return 'HTTP '+res.status+': '+(b.detail||b.title||JSON.stringify(b));}
+  return '';
+}
 function attemptRate(apt,from,to,price,attemptNum){
-  return callWorker('setRate',{apartmentId:apt.id,from:from,to:to,price:price}).then(res=>logEntry('rate '+apt.name,'ok',res))
+  return callWorker('setRate',{apartmentId:apt.id,from:from,to:to,price:price}).then(res=>{const f=resFail(res);if(f)throw new Error(f);logEntry('rate '+apt.name,'ok',res);if(document.getElementById('pr-lock').checked)return callWorker('setPriceLocks',{listingId:apt.id,from:from,to:to,price:price,note:'Price Setter'}).then(l=>{if(!l.success)logEntry('lock '+apt.name,'err',l.error||'lock failed');});})
     .catch(err=>{
       if(attemptNum<2)return attemptRate(apt,from,to,price,attemptNum+1);
       logEntry('rate '+apt.name,'err',err.message,()=>attemptRate(apt,from,to,price,1));
@@ -389,7 +397,7 @@ function attemptBlock(apt,from,to,attemptNum){
   return callWorker('getBookings',{params:{apartmentId:apt.id,from:from,to:to}}).then(result=>{
     const conflict=findConflict(result.body&&result.body.bookings,from,to);
     if(conflict){logEntry('block '+apt.name,'err','Overlaps existing booking ('+(conflict['guest-name']||conflict.id)+'), skipped');return;}
-    return callWorker('blockDates',{apartmentId:apt.id,arrivalDate:from,departureDate:to}).then(res=>logEntry('block '+apt.name,'ok',res));
+    return callWorker('blockDates',{apartmentId:apt.id,arrivalDate:from,departureDate:to}).then(res=>{const f=resFail(res);if(f)throw new Error(f);logEntry('block '+apt.name,'ok',res);});
   }).catch(err=>{
     if(attemptNum<2)return attemptBlock(apt,from,to,attemptNum+1);
     logEntry('block '+apt.name,'err',err.message,()=>attemptBlock(apt,from,to,1));
@@ -434,11 +442,14 @@ document.getElementById('c-runBtn').onclick=()=>{
     ranges=[{from:cFrom.value,to:cTo.value}];
   }
   if(!selectedIds.length){err.textContent='Pick at least one listing.';return;}
-  apartments.filter(a=>selectedIds.indexOf(a.id)!==-1).forEach(apt=>ranges.forEach(rg=>attemptBlock(apt,rg.from,rg.to,1)));
+  const picked=apartments.filter(a=>selectedIds.indexOf(a.id)!==-1);
+  if(!confirm('Block '+picked.length+' listing(s) for '+ranges.length+' date range(s)?'))return;
+  picked.forEach(apt=>ranges.forEach(rg=>attemptBlock(apt,rg.from,rg.to,1)));
 };
 
 // ### 10b --- block init
 cFrom.value=todayISO();setMin();syncTo();renderBlockRanges();
+refreshApartments();
 
 // ### 11 --- tabs
 document.querySelectorAll('.tab').forEach(t=>{

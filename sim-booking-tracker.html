@@ -23,6 +23,7 @@
   button { background:transparent; border:1px solid var(--accent); color:var(--accent); font-family:var(--mono); font-size:12px; padding:7px 12px; border-radius:3px; cursor:pointer; margin-left:6px; }
   button:hover { background:rgba(111,191,115,.12); }
   button.danger { border-color:var(--danger); color:var(--danger); }
+  button:disabled { opacity:.45; cursor:default; }
   #statusMsg { font-size:11px; color:var(--danger); margin-bottom:10px; min-height:14px; }
   .dayline { font-size:9px; color:var(--dim); display:block; }
 
@@ -31,6 +32,8 @@
   .calScroll th, .calScroll td { border:1px solid var(--line); padding:4px 6px; font-size:11px; width:64px; height:28px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .stickyCol { position:sticky; left:0; background:var(--panel); z-index:1; text-align:left; width:90px; white-space:normal; overflow:visible; text-overflow:clip; }
   .monthRow th { height:22px; position:sticky; top:0; background:var(--panel); z-index:2; }
+  .monthRow th.monthCell { overflow:visible; text-align:left; cursor:pointer; }
+  .monthLbl { position:sticky; left:98px; display:inline-block; white-space:nowrap; padding:0 6px; color:var(--accent); font-weight:bold; }
   .dateRow th { height:34px; position:sticky; top:62px; background:#1c2a1f; z-index:2; }
   .grandRow td { height:40px; position:sticky; top:22px; background:#1c2a1f; z-index:2; font-weight:bold; font-size:13px; color:var(--accent); }
   .todayCol { box-shadow:inset 0 0 0 999px rgba(224,198,52,.12); }
@@ -44,6 +47,9 @@
   #alertBar .alertRow.open .alertDetail { display:block; }
   .propMeta { font-size:9px; color:var(--dim); font-weight:normal; display:block; }
   .bookingCell { cursor:pointer; }
+  .emptyCell { cursor:pointer; }
+  .emptyCell:hover { background:rgba(111,191,115,.10); }
+  .cellPicked { background:rgba(111,191,115,.30)!important; box-shadow:inset 0 0 0 2px var(--accent); }
 
   .modalBackdrop { display:none; position:fixed; inset:0; background:rgba(0,0,0,.6); align-items:center; justify-content:center; z-index:50; padding:16px; }
   .modalBackdrop.open { display:flex; }
@@ -61,6 +67,7 @@
 <summary>Settings</summary>
 <div style="text-align:left;">
 <button id="addAptBtn">Manage Properties</button>
+<button id="calcBtn">Calculator</button>
 <button id="importBtn">Import from Smoobu</button>
 <button id="canBtn">Cancelled bookings</button>
 <button id="audBtn">Capacity check</button>
@@ -71,11 +78,20 @@
 <div id="statusMsg"></div>
 
 <div id="alertBar"></div>
-<h3>Calendar <button id="calPrevBtn">&#9664;</button><span id="calRangeLabel" style="font-size:10px;color:var(--dim);margin:0 4px;"></span><button id="calNextBtn">&#9654;</button></h3>
+<h3 style="display:flex;align-items:center;gap:6px;flex-wrap:nowrap;white-space:nowrap;">Calendar <button id="calPrevBtn" style="margin:0;">&#9664;</button><span id="calRangeLabel" style="font-size:10px;color:var(--dim);white-space:nowrap;"></span><button id="calNextBtn" style="margin:0;">&#9654;</button><button id="calTodayBtn" style="margin:0;" title="Back to the default view (starts yesterday)">Today</button></h3>
 <div class="calScroll"><div id="calendarWrap"></div></div>
 
 <datalist id="guestNames"></datalist>
 <datalist id="channelNames"></datalist>
+
+<div class="modalBackdrop" id="calcBackdrop">
+  <div class="modalBox" style="max-width:280px;">
+    <button id="calcXBtn" style="position:absolute;top:8px;right:8px;padding:3px 8px;">&times;</button>
+    <h3>Calculator</h3>
+    <input id="calcDisplay" readonly style="width:100%;font-size:20px;text-align:right;padding:8px;margin-top:4px;">
+    <div id="calcPad" style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:8px;"></div>
+  </div>
+</div>
 
 <div class="modalBackdrop" id="audBackdrop">
   <div class="modalBox" style="max-width:460px;">
@@ -122,6 +138,7 @@
       <button id="modalDeleteBtn" class="danger" style="display:none">Delete</button>
       <button id="modalSaveBtn">Save</button>
     </div>
+    <div id="modalStatus" style="font-size:11px;min-height:14px;margin:-4px 0 8px;font-weight:normal;"></div>
     <div id="modalFields"></div>
   </div>
 </div>
@@ -130,14 +147,23 @@
 // ### 1 --- config & state
 const WORKER_URL='https://smoobu-proxy-v2.ulnetconzept.workers.dev';
 let bookings=[],apartments=[],smoobuListings=[],overrides=[];
-const statusEl=document.getElementById('statusMsg'),addAptBtn=document.getElementById('addAptBtn'),calendarWrap=document.getElementById('calendarWrap'),guestNames=document.getElementById('guestNames'),channelNames=document.getElementById('channelNames'),modalBackdrop=document.getElementById('modalBackdrop'),modalTitle=document.getElementById('modalTitle'),modalFields=document.getElementById('modalFields'),modalSaveBtn=document.getElementById('modalSaveBtn'),modalDeleteBtn=document.getElementById('modalDeleteBtn'),modalXBtn=document.getElementById('modalXBtn');
-function setStatus(msg){statusEl.textContent=msg;}
+const statusEl=document.getElementById('statusMsg'),addAptBtn=document.getElementById('addAptBtn'),calendarWrap=document.getElementById('calendarWrap'),guestNames=document.getElementById('guestNames'),channelNames=document.getElementById('channelNames'),modalBackdrop=document.getElementById('modalBackdrop'),modalTitle=document.getElementById('modalTitle'),modalFields=document.getElementById('modalFields'),modalSaveBtn=document.getElementById('modalSaveBtn'),modalDeleteBtn=document.getElementById('modalDeleteBtn'),modalXBtn=document.getElementById('modalXBtn'),modalStatusEl=document.getElementById('modalStatus');
+function setStatus(msg,kind){statusEl.textContent=msg;statusEl.style.color=kind==='ok'?'var(--accent)':'var(--danger)';}
+let modalStatusTimer=null;
+function setModalStatus(msg,kind){
+  clearTimeout(modalStatusTimer);
+  modalStatusEl.textContent=msg;
+  modalStatusEl.style.color=kind==='ok'?'var(--accent)':(kind==='err'?'var(--danger)':'var(--dim)');
+  if(kind==='ok')modalStatusTimer=setTimeout(()=>{modalStatusEl.textContent='';},2500);
+}
 
-// ### 2 --- worker call helper
+// ### 2 --- worker call helper (text/plain avoids a CORS preflight — do not change to application/json)
 function callWorker(action,extra){
-  return fetch(WORKER_URL,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(Object.assign({action:action},extra||{}))})
-    .then(r=>r.json())
-    .then(res=>{setStatus(res.error?('Worker error: '+res.error):'');return res;})
+  return fetch(WORKER_URL,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify(Object.assign({action:action},extra||{}))})
+    .then(r=>r.text()).then(t=>{let res;try{res=JSON.parse(t);}catch(e){throw new Error('Non-JSON: '+t.slice(0,200));}
+      setStatus(res.error?('Worker error: '+res.error):'');
+      return res;
+    })
     .catch(err=>{setStatus('Fetch failed: '+err.message);throw err;});
 }
 
@@ -181,6 +207,8 @@ function openPropertySummary(apt){
   modalFields.innerHTML='';
   modalDeleteBtn.style.display='none';
   modalSaveBtn.style.display='none';
+  setModalStatus('');
+  {const old=document.getElementById('modalMsgWrap');if(old)old.remove();}
 
   const todayIso=toISO(new Date());
   const list=bookings.filter(b=>(apt.listingIds||[]).includes(String(b.m_apartment_id)));
@@ -210,7 +238,9 @@ function openPropertySummary(apt){
   document.getElementById('ps_thSave').onclick=()=>{
     const v=Number(document.getElementById('ps_th').value)||1;
     apt.threshold=v;
-    saveApartments().then(()=>{closeModal();renderCalendar();});
+    setModalStatus('Saving…');
+    saveApartments().then(()=>{setModalStatus('Saved.','ok');renderCalendar();setTimeout(closeModal,450);})
+      .catch(err=>setModalStatus('Failed: '+err.message,'err'));
   };
 }
 
@@ -219,6 +249,8 @@ function openPropertiesDialog(){
   modalFields.innerHTML='';
   modalDeleteBtn.style.display='none';
   modalSaveBtn.style.display='none';
+  setModalStatus('');
+  {const old=document.getElementById('modalMsgWrap');if(old)old.remove();}
 
   const freshWrap=document.createElement('div');
   freshWrap.style.cssText='padding-bottom:10px;border-bottom:1px dashed var(--line);margin-bottom:10px;';
@@ -229,9 +261,11 @@ function openPropertiesDialog(){
   freshBtn.onclick=()=>{
     const nameEl=document.getElementById('pd_freshName'),idEl=document.getElementById('pd_freshId');
     const name=nameEl.value.trim(),id=idEl.value.trim();
-    if(!name||!id)return;
-    if(smoobuListings.some(l=>String(l.id)===id)){alert('That listing ID already exists.');return;}
-    addManualListing(name,id).then(openPropertiesDialog);
+    if(!name||!id){setModalStatus('Enter both a name and an ID.','err');return;}
+    if(smoobuListings.some(l=>String(l.id)===id)){setModalStatus('That listing ID already exists.','err');return;}
+    setModalStatus('Adding…');
+    addManualListing(name,id).then(()=>{openPropertiesDialog();setModalStatus('Listing added.','ok');})
+      .catch(err=>setModalStatus('Failed: '+err.message,'err'));
   };
   freshWrap.appendChild(freshBtn);
   modalFields.appendChild(freshWrap);
@@ -239,7 +273,7 @@ function openPropertiesDialog(){
   const wrap=document.createElement('div');
   wrap.style.overflowX='auto';
   const table=document.createElement('table');
-  table.innerHTML='<thead><tr><th>Name</th><th>Listings</th><th>Threshold</th><th></th></tr></thead>';
+  table.innerHTML='<thead><tr><th>Name</th><th>Listings</th><th></th></tr></thead>';
   const tbody=document.createElement('tbody');
   table.appendChild(tbody);
   wrap.appendChild(table);
@@ -289,20 +323,16 @@ function openPropertiesDialog(){
       const tr=document.createElement('tr');
       const tdName=document.createElement('td');tdName.textContent=a.name;
       const tdListings=document.createElement('td');
-      tdListings.appendChild(buildListingGrid(a.listingIds=a.listingIds||[],idx,()=>saveApartments()));
-      const tdTh=document.createElement('td');
-      tdTh.innerHTML=`<input type="number" class="thInput" value="${a.threshold}" style="width:60px">`;
+      tdListings.appendChild(buildListingGrid(a.listingIds=a.listingIds||[],idx,()=>{setModalStatus('Saving…');saveApartments().then(()=>setModalStatus('Saved.','ok')).catch(err=>setModalStatus('Failed: '+err.message,'err'));}));
       const tdActions=document.createElement('td');
-      tdActions.innerHTML='<button class="saveAptBtn">Save</button><button class="delAptBtn danger">x</button>';
-      tr.appendChild(tdName);tr.appendChild(tdListings);tr.appendChild(tdTh);tr.appendChild(tdActions);
-      tr.querySelector('.saveAptBtn').onclick=()=>{
-        a.threshold=Number(tr.querySelector('.thInput').value)||1;
-        saveApartments().then(renderRows);
-      };
+      tdActions.innerHTML='<button class="delAptBtn danger">x</button>';
+      tr.appendChild(tdName);tr.appendChild(tdListings);tr.appendChild(tdActions);
       tr.querySelector('.delAptBtn').onclick=()=>{
         if(!confirm('Delete property "'+a.name+'"? This cannot be undone.'))return;
         apartments.splice(idx,1);
-        saveApartments().then(renderRows);
+        setModalStatus('Deleting…');
+        saveApartments().then(()=>{renderRows();setModalStatus('Deleted.','ok');})
+          .catch(err=>setModalStatus('Failed: '+err.message,'err'));
       };
       tbody.appendChild(tr);
     });
@@ -323,9 +353,11 @@ function openPropertiesDialog(){
   addBtn.onclick=()=>{
     const nameEl=document.getElementById('pd_name'),thEl=document.getElementById('pd_th');
     const name=nameEl.value.trim();
-    if(!name)return;
+    if(!name){setModalStatus('Enter a property name.','err');return;}
     apartments.push({id:name.toLowerCase().replace(/\s+/g,'-'),name:name,listingIds:newListingIds.slice(),threshold:Number(thEl.value)||1});
-    saveApartments().then(renderRows);
+    setModalStatus('Adding…');
+    saveApartments().then(()=>{renderRows();setModalStatus('Property added.','ok');})
+      .catch(err=>setModalStatus('Failed: '+err.message,'err'));
     nameEl.value='';thEl.value='';newListingIds.length=0;
   };
   addWrap.appendChild(addBtn);
@@ -430,6 +462,32 @@ function loadCancelled(){
 document.getElementById('canBtn').onclick=()=>{canBackdrop.classList.add('open');loadCancelled();};
 document.getElementById('canXBtn').onclick=()=>canBackdrop.classList.remove('open');
 
+// ### 3b3c --- simple calculator (Settings)
+const calcBackdrop=document.getElementById('calcBackdrop'),calcDisplay=document.getElementById('calcDisplay'),calcPad=document.getElementById('calcPad');
+let calcExpr='';
+function calcRender(){calcDisplay.value=calcExpr||'0';}
+function calcPress(v){
+  if(v==='C'){calcExpr='';}
+  else if(v==='⌫'){calcExpr=calcExpr.slice(0,-1);}
+  else if(v==='='){
+    try{
+      if(!/^[0-9+\-*/.() ]+$/.test(calcExpr))throw 0;
+      const r=Function('"use strict";return ('+calcExpr+')')();
+      calcExpr=String(Math.round((r+Number.EPSILON)*1e8)/1e8);
+    }catch(e){calcExpr='Error';}
+  }
+  else calcExpr+=v;
+  calcRender();
+}
+['7','8','9','/','4','5','6','*','1','2','3','-','C','0','.','+','⌫','=' ].forEach(k=>{
+  const b=document.createElement('button');b.type='button';b.textContent=k;
+  if(k==='=')b.className='warn';
+  b.onclick=()=>calcPress(k);
+  calcPad.appendChild(b);
+});
+document.getElementById('calcBtn').onclick=()=>{calcExpr='';calcRender();calcBackdrop.classList.add('open');};
+document.getElementById('calcXBtn').onclick=()=>calcBackdrop.classList.remove('open');
+
 // ### 3b4 --- capacity check settings (dialog) + on-demand run
 const audBackdrop=document.getElementById('audBackdrop'),audAuto=document.getElementById('audAuto'),audDays=document.getElementById('audDays'),audStatus=document.getElementById('audStatus');
 document.getElementById('audBtn').onclick=()=>{
@@ -445,11 +503,11 @@ document.getElementById('audRunBtn').onclick=()=>{
   audStatus.textContent='Checking...';
   callWorker('runAudit').then(res=>{
     audStatus.textContent=res.error?('Failed: '+res.error):('Checked '+res.from+' to '+res.to+': '+res.risks+' open listing range(s) at capacity'+(res.autoBlock?', '+res.blocked+' blocked':'')+', '+res.stuck+' stuck block range(s).');
-    loadAlerts();
+    loadAlerts();loadAuditSnapshot().then(renderCalendar);
   }).catch(e=>{audStatus.textContent='Failed: '+e.message;});
 };
 let auditTimer=null;
-function auditSoon(){clearTimeout(auditTimer);auditTimer=setTimeout(()=>callWorker('runAudit').then(loadAlerts).catch(()=>{}),4000);}
+function auditSoon(){clearTimeout(auditTimer);auditTimer=setTimeout(()=>callWorker('runAudit').then(()=>{loadAlerts();loadAuditSnapshot().then(renderCalendar);}).catch(()=>{}),4000);}
 
 // ### 3c --- alert bar (cancellations, modifications, capacity, internal errors); x dismisses for good, click expands + jumps calendar to that date
 const alertBar=document.getElementById('alertBar');
@@ -487,13 +545,22 @@ function loadAlerts(){
 }
 setInterval(loadAlerts,60000);
 // ### 3b --- reset: flush all sim bookings + per-day threshold overrides
-document.getElementById('resetBtn').onclick=()=>{
+const resetBtn=document.getElementById('resetBtn');
+resetBtn.onclick=()=>{
   if(!confirm('Delete ALL sim bookings and clear ALL padded thresholds?'))return;
+  resetBtn.disabled=true;
+  setStatus('Resetting…');
   const ov=overrides.filter(o=>o.apartment_id!=='__day__'&&o.threshold_override!=null);
   Promise.all([
     ...bookings.map(b=>callWorker('deleteSimBooking',{id:b.id})),
     ...ov.map(o=>callWorker('setDateOverride',{apartment_id:o.apartment_id,date:o.date,threshold_override:null,notes:o.notes||''}))
-  ]).then(()=>loadBookings()).then(()=>loadOverrides()).then(renderCalendar);
+  ]).then(()=>loadBookings()).then(()=>loadOverrides()).then(renderCalendar).then(()=>{
+    resetBtn.disabled=false;
+    setStatus('Reset done.','ok');
+  }).catch(err=>{
+    resetBtn.disabled=false;
+    setStatus('Reset failed: '+err.message);
+  });
 };
 
 // ### 4c --- smoobu listings catalog + manually-added listings (stored in meta as manual_listings)
@@ -539,8 +606,24 @@ function loadOverrides(){
 function findOverride(apartmentId,date){
   return overrides.find(o=>o.apartment_id===apartmentId&&o.date===date);
 }
+function effTh(a,date){
+  const o=findOverride(a.id,date);
+  return o&&o.threshold_override!=null?Number(o.threshold_override):(Number(a.threshold)||0);
+}
 function findDayNote(date){
   return overrides.find(o=>o.apartment_id==='__day__'&&o.date===date);
+}
+
+// ### 4d2 --- audit snapshot (from the 15-min capacity check): flags a property/date as still open on Smoobu although at capacity
+let auditSnapshot={risks:[],stucks:[]};
+function loadAuditSnapshot(){
+  return callWorker('getAuditSnapshot').then(res=>{auditSnapshot=res.snapshot||{risks:[],stucks:[]};});
+}
+function propRisk(propName,date){
+  return auditSnapshot.risks.some(r=>r.prop===propName&&r.from<=date&&date<=r.to);
+}
+function propStuck(propName,date){
+  return auditSnapshot.stucks.some(r=>r.prop===propName&&r.from<=date&&date<=r.to);
 }
 
 // ### 4e --- booking message helpers (WhatsApp / SMS from the add-booking dialogue)
@@ -570,6 +653,8 @@ function openModal(cfg){
   modalTitle.textContent=cfg.title;
   modalFields.innerHTML='';
   modalSaveBtn.style.display='';
+  modalSaveBtn.disabled=false;modalDeleteBtn.disabled=false;
+  setModalStatus('');
   const oldMsg=document.getElementById('modalMsgWrap');if(oldMsg)oldMsg.remove();
   if(cfg.fields.some(f=>f.type==='msgbtns')){
     const wrap=document.createElement('div');wrap.id='modalMsgWrap';wrap.style.cssText='position:relative;margin:-4px 0 10px;';
@@ -587,9 +672,9 @@ function openModal(cfg){
     label.textContent=f.label;
     if(f.type==='msgbtns')return;
     if(f.type==='rangelist'){
-      const rangesState=[];
+      const rangesState=f.prefillRange?[Object.assign({},f.prefillRange)]:[];
       const hidden=document.createElement('input');
-      hidden.type='hidden';hidden.id='mf_'+f.key;hidden.value='[]';
+      hidden.type='hidden';hidden.id='mf_'+f.key;hidden.value=JSON.stringify(rangesState);
       const listDiv=document.createElement('div');
       function renderRangeList(){
         listDiv.innerHTML='';
@@ -607,8 +692,8 @@ function openModal(cfg){
       }
       const rangeRow=document.createElement('div');
       rangeRow.style.cssText='display:flex;gap:6px;align-items:center;margin-top:4px;';
-      const fromInput=document.createElement('input');fromInput.type='date';fromInput.value=toISO(new Date());
-      const toInput=document.createElement('input');toInput.type='date';toInput.value=toISO(addDays(new Date(),2));
+      const fromInput=document.createElement('input');fromInput.type='date';fromInput.value=f.prefillRange?f.prefillRange.arrival:toISO(new Date());
+      const toInput=document.createElement('input');toInput.type='date';toInput.value=f.prefillRange?f.prefillRange.departure:toISO(addDays(new Date(),2));
       const nightsInput=document.createElement('input');nightsInput.type='number';nightsInput.min='1';nightsInput.value='2';nightsInput.title='Nights';nightsInput.style.width='56px';
       const syncTo=()=>{const n=parseInt(nightsInput.value,10);if(!fromInput.value||!n||n<1)return;toInput.value=toISO(addDays(toDate(fromInput.value),n));};
       const syncNights=()=>{if(!fromInput.value||!toInput.value)return;const n=Math.round((toDate(toInput.value)-toDate(fromInput.value))/86400000);if(n>=1)nightsInput.value=n;};
@@ -626,6 +711,7 @@ function openModal(cfg){
       label.appendChild(listDiv);
       label.appendChild(hidden);
       modalFields.appendChild(label);
+      renderRangeList();
       return;
     }
     let input;
@@ -654,15 +740,36 @@ modalXBtn.onclick=closeModal;
 modalSaveBtn.onclick=()=>{
   const values={};
   modalFields.querySelectorAll('[id^="mf_"]').forEach(el=>{if(!el.readOnly&&!el.disabled)values[el.id.slice(3)]=el.value;});
-  if(modalOnSave)modalOnSave(values);
-  closeModal();
+  if(!modalOnSave){closeModal();return;}
+  modalSaveBtn.disabled=true;modalDeleteBtn.disabled=true;
+  setModalStatus('Saving…');
+  Promise.resolve(modalOnSave(values)).then(res=>{
+    modalSaveBtn.disabled=false;modalDeleteBtn.disabled=false;
+    if(res&&res.error){setModalStatus('Failed: '+res.error,'err');return;}
+    setModalStatus('Saved.','ok');
+    setTimeout(closeModal,450);
+  }).catch(err=>{
+    modalSaveBtn.disabled=false;modalDeleteBtn.disabled=false;
+    setModalStatus('Failed: '+err.message,'err');
+  });
 };
 modalDeleteBtn.onclick=()=>{
-  if(modalOnDelete&&confirm('Delete this? This cannot be undone.'))modalOnDelete();
-  closeModal();
+  if(!modalOnDelete||!confirm('Delete this? This cannot be undone.'))return;
+  modalSaveBtn.disabled=true;modalDeleteBtn.disabled=true;
+  setModalStatus('Deleting…');
+  Promise.resolve(modalOnDelete()).then(res=>{
+    modalSaveBtn.disabled=false;modalDeleteBtn.disabled=false;
+    if(res&&res.error){setModalStatus('Failed: '+res.error,'err');return;}
+    setModalStatus('Deleted.','ok');
+    setTimeout(closeModal,450);
+  }).catch(err=>{
+    modalSaveBtn.disabled=false;modalDeleteBtn.disabled=false;
+    setModalStatus('Failed: '+err.message,'err');
+  });
 };
 
 // ### 5b --- guest + channel datalists
+const guestContacts={};
 function refreshGuestDatalist(){
   guestNames.innerHTML='';
   channelNames.innerHTML='';
@@ -674,6 +781,7 @@ function refreshGuestDatalist(){
       opt.value=b.guest_name;
       guestNames.appendChild(opt);
     }
+    if(b.guest_name&&b.details&&b.details.contact)guestContacts[b.guest_name]=b.details.contact;
     if(b.channel&&!seenChannels.has(b.channel)){
       seenChannels.add(b.channel);
       const opt=document.createElement('option');
@@ -684,7 +792,7 @@ function refreshGuestDatalist(){
 }
 
 // ### 6 --- add booking modal (opened from a property's subtotal row); supports multiple ranges for one guest/listing
-function openAddBookingModal(apt){
+function openAddBookingModal(apt,prefillRange){
   openModal({
     title:'Add Booking'+(apt?' — '+apt.name:''),
     fields:[
@@ -695,21 +803,30 @@ function openAddBookingModal(apt){
       {key:'channel',label:'Channel',list:'channelNames',value:'Private'},
       {key:'price',label:'Host earning £ per date range (price - commission; direct = price; blank = 0)',type:'number'},
       {key:'contact',label:'Contact number'},
-      {key:'ranges',label:'Date range(s) — add one or more',type:'rangelist'},
+      {key:'ranges',label:'Date range(s) — add one or more',type:'rangelist',prefillRange:prefillRange},
       {key:'note',label:'Note',type:'textarea'},
       {key:'msg',label:'Message the guest (opens a draft for you to send)',type:'msgbtns'}
     ],
     onSave:(v)=>{
       let ranges=[];
       try{ranges=JSON.parse(v.ranges||'[]');}catch(e){}
-      if(!ranges.length)return;
+      if(!ranges.length)return{error:'Add at least one date range.'};
       const prop=resolveApartment(v.listing);
-      Promise.all(ranges.map(r=>callWorker('addSimBooking',{
+      return Promise.all(ranges.map(r=>callWorker('addSimBooking',{
         guest_name:v.guest_name,apartment_id:v.listing,apartment_name:prop?prop.name:'(unassigned)',
         room_number:v.room_number,channel:v.channel,arrival:r.arrival,departure:r.departure,
         details:{contact:v.contact,note:v.note,guests:v.guests,price:v.price}
-      }))).then(loadBookings).then(auditSoon);
+      }))).then(results=>{
+        const bad=results.find(r=>r.error);
+        if(bad)return{error:bad.error};
+        return loadBookings().then(auditSoon);
+      });
     }
+  });
+  const gnInput=document.getElementById('mf_guest_name'),ctInput=document.getElementById('mf_contact');
+  gnInput.addEventListener('input',()=>{
+    const c=guestContacts[gnInput.value];
+    if(c&&!ctInput.value)ctInput.value=c;
   });
 }
 
@@ -737,9 +854,9 @@ function openEditBookingModal(b){
     ],
     footerHtml:'Original: '+b.apartment_name+' ('+b.apartment_id+') &middot; '+b.arrival+' &rarr; '+b.departure,
     onSave:(v)=>{
-      if(!v.m_arrival||!v.m_departure||v.m_arrival>=v.m_departure)return;
+      if(!v.m_arrival||!v.m_departure||v.m_arrival>=v.m_departure)return{error:'M Arrival must be before M Departure.'};
       const prop=resolveApartment(v.listing);
-      callWorker('updateSimBooking',{
+      return callWorker('updateSimBooking',{
         id:b.id,guest_name:v.guest_name,channel:v.channel,room_number:v.room_number,
         m_arrival:v.m_arrival,m_departure:v.m_departure,
         m_apartment_id:v.listing,m_apartment_name:prop?prop.name:'(unassigned)',
@@ -748,10 +865,10 @@ function openEditBookingModal(b){
           actual_review:{rating:v.actual_review_rating,text:v.actual_review_text},
           host_review:{rating:v.host_review_rating,text:v.host_review_text}
         }
-      }).then(loadBookings).then(auditSoon);
+      }).then(res=>res.error?res:loadBookings().then(auditSoon));
     },
     onDelete:()=>{
-      callWorker('deleteSimBooking',{id:b.id}).then(loadBookings).then(auditSoon);
+      return callWorker('deleteSimBooking',{id:b.id}).then(res=>res.error?res:loadBookings().then(auditSoon));
     }
   });
   const ea=document.getElementById('mf_m_arrival'),ed=document.getElementById('mf_m_departure'),en=document.getElementById('mf_nights');
@@ -769,14 +886,15 @@ function openDayDialog(ds){
     fields:[
       {key:'note',label:'Note for this day',type:'textarea',value:dayNote?dayNote.notes:''},
       {key:'apt',label:'Property (optional, for threshold override)',type:'select',optionsHtml:'<option value="">-- none --</option>'+apartments.map(a=>'<option value="'+a.id+'">'+a.name+' (default '+a.threshold+')</option>').join('')},
-      {key:'threshold_override',label:'Threshold override for that property (blank = default)',type:'number',placeholder:'e.g. 5'}
+      {key:'threshold_override',label:'Threshold override for that property (blank, or the default value = back to default)',type:'number',placeholder:'e.g. 5'}
     ],
     onSave:(v)=>{
-      callWorker('setDateOverride',{apartment_id:'__day__',date:ds,threshold_override:null,notes:v.note})
-        .then(()=>{
+      return callWorker('setDateOverride',{apartment_id:'__day__',date:ds,threshold_override:null,notes:v.note})
+        .then(res=>{
+          if(res.error)return res;
           if(v.apt)return callWorker('setDateOverride',{apartment_id:v.apt,date:ds,threshold_override:(()=>{const t=v.threshold_override.trim(),a=apartments.find(x=>String(x.id)===String(v.apt));return t===''||(a&&Number(t)===Number(a.threshold))?null:Number(t)})(),notes:''});
         })
-        .then(()=>loadOverrides().then(renderCalendar)).then(auditSoon);
+        .then(res=>res&&res.error?res:loadOverrides().then(renderCalendar).then(auditSoon));
     }
   });
   const aptSelect=document.getElementById('mf_apt'),thInput=document.getElementById('mf_threshold_override');
@@ -784,6 +902,22 @@ function openDayDialog(ds){
     const existing=findOverride(aptSelect.value,ds);
     thInput.value=existing&&existing.threshold_override!=null?existing.threshold_override:'';
   };
+  const defBtn=document.createElement('button');defBtn.type='button';defBtn.textContent='Reset to default';defBtn.style.cssText='margin:6px 0 0;';
+  defBtn.onclick=()=>{
+    if(!aptSelect.value){setModalStatus('Pick a property first.','err');return;}
+    thInput.value='';
+    setModalStatus('Cleared — press Save to use the default.');
+  };
+  thInput.parentNode.appendChild(defBtn);
+  const dayAll=document.createElement('button');dayAll.type='button';dayAll.textContent='Reset ALL properties for this day';dayAll.style.cssText='margin:6px 0 0 6px;';
+  dayAll.onclick=()=>{
+    dayAll.disabled=true;setModalStatus('Resetting…');
+    callWorker('clearThresholdOverrides',{date:ds}).then(res=>{
+      if(res.error)throw new Error(res.error);
+      return loadOverrides().then(renderCalendar).then(()=>{setModalStatus('Reset to defaults ('+res.cleared+' cleared).','ok');auditSoon();});
+    }).catch(err=>setModalStatus('Failed: '+err.message,'err')).then(()=>{dayAll.disabled=false;});
+  };
+  thInput.parentNode.appendChild(dayAll);
 }
 
 // ### 7 --- row packing algorithm (based on m_arrival/m_departure)
@@ -818,13 +952,17 @@ function getColor(key){
 }
 
 // ### 9 --- render grid: month row, sticky grand total, date+day row (same background), then per-property bold subtotal + booking rows; today column highlighted
-let windowStart=new Date();windowStart.setHours(0,0,0,0);windowStart.setDate(windowStart.getDate()-1);
+function defaultWindowStart(){const d=new Date();d.setHours(0,0,0,0);d.setDate(d.getDate()-1);return d;}
+let windowStart=defaultWindowStart();
 const WINDOW_DAYS=31;
 function renderCalendar(){
+  cellPickClear();
   const days=[];
   for(let d=new Date(windowStart);d<addDays(windowStart,WINDOW_DAYS);d=addDays(d,1))days.push(new Date(d));
   const windowStartIso=toISO(windowStart),windowEndIso=toISO(addDays(windowStart,WINDOW_DAYS));
-  document.getElementById('calRangeLabel').textContent=windowStartIso+' to '+toISO(addDays(windowStart,WINDOW_DAYS-1));
+  const wEnd=addDays(windowStart,WINDOW_DAYS-1),calLbl=document.getElementById('calRangeLabel');
+  calLbl.textContent=windowStart.getDate()+' '+monthNames[windowStart.getMonth()]+' – '+wEnd.getDate()+' '+monthNames[wEnd.getMonth()];
+  calLbl.title=windowStartIso+' to '+toISO(wEnd);
 
   const todayIso=toISO(new Date());
   const groups={};
@@ -838,24 +976,26 @@ function renderCalendar(){
   // ### 9a --- month colspan groups
   const monthGroups=[];
   days.forEach(d=>{
-    const label=monthNames[d.getMonth()]+' '+d.getFullYear();
+    const label=monthNames[d.getMonth()]+' '+d.getFullYear(),dIso=toISO(d);
     const last=monthGroups[monthGroups.length-1];
-    if(last&&last.label===label)last.span++;
-    else monthGroups.push({label:label,span:1});
+    if(last&&last.label===label){last.span++;last.to=dIso;}
+    else monthGroups.push({label:label,span:1,from:dIso,to:dIso});
   });
 
   let html='<table><colgroup><col style="width:90px">';
   days.forEach(()=>html+='<col style="width:64px">');
   html+='</colgroup><thead>';
   html+='<tr class="monthRow"><th class="stickyCol"></th>';
-  monthGroups.forEach(m=>html+=`<th colspan="${m.span}">${m.label}</th>`);
+  monthGroups.forEach(m=>html+=`<th class="monthCell" colspan="${m.span}" data-from="${m.from}" data-to="${m.to}" data-label="${m.label}" title="Tap to set thresholds for these days"><span class="monthLbl">${m.label}</span></th>`);
   html+='</tr>';
   html+='<tr class="grandRow"><td class="stickyCol">G.Total<span class="propMeta">'+apartments.reduce((s,a)=>s+(a.threshold||0),0)+' &middot; '+bookings.reduce((s,b)=>s+Math.round((toDate(b.m_departure)-toDate(b.m_arrival))/86400000),0)+' nts</span></td>';
   days.forEach(d=>{
     const ds=toISO(d);
     const count=bookings.filter(b=>isOccupiedNormal(ds,b)).length;
     const sum=bookings.filter(b=>isOccupiedNormal(ds,b)).reduce((t,b)=>t+nightly(b),0);
-    html+=`<td class="${ds===todayIso?'todayHead':''}">${count===0?'':count}<span class="dayline">${fmtGbp(sum)}</span></td>`;
+    const gcap=apartments.reduce((t,a)=>t+effTh(a,ds),0),gdef=apartments.reduce((t,a)=>t+(Number(a.threshold)||0),0);
+    const ghit=gcap>0&&count>=gcap;
+    html+=`<td class="${ds===todayIso?'todayHead':''}" style="${ghit?'color:var(--danger)':''}">${count===0?'':count}${gcap!==gdef?'<sup style="color:#e0c634">'+gcap+'</sup>':''}<span class="dayline">${fmtGbp(sum)}</span></td>`;
   });
   html+='</tr>';
   html+='<tr class="dateRow"><th class="stickyCol bookingPlusCell" style="cursor:pointer">Booking+</th>';
@@ -878,7 +1018,9 @@ function renderCalendar(){
       const th=g.apt?(ov&&ov.threshold_override!=null?ov.threshold_override:g.apt.threshold):null;
       const hit=th!=null&&count>=th;
       const gs=g.list.filter(b=>isOccupiedNormal(ds,b)).reduce((t,b)=>t+nightly(b),0);
-      html+=`<td class="${ds===todayIso?'todayCol':''}" style="${hit?'color:var(--danger)':''}">${count===0?'':count}${ov&&ov.threshold_override!=null?'<sup style="color:#e0c634">'+th+'</sup>':''}<span class="dayline">${fmtGbp(gs)}</span></td>`;
+      const risk=g.apt&&propRisk(g.name,ds),stuck=g.apt&&propStuck(g.name,ds);
+      const flag=risk?'<sup class="riskFlag" data-prop="'+encodeURIComponent(g.name)+'" title="At capacity but still open on Smoobu — click to block" style="color:var(--danger);cursor:pointer;font-size:12px;padding:2px 4px;">&#9888;</sup>':(stuck?'<sup title="Under capacity but still blocked on Smoobu" style="color:#e0c634;cursor:help;">&#128274;</sup>':'');
+      html+=`<td class="${ds===todayIso?'todayCol':''}" style="${hit?'color:var(--danger)':''}">${count===0?'':count}${ov&&ov.threshold_override!=null?'<sup style="color:#e0c634">'+th+'</sup>':''}${flag}<span class="dayline">${fmtGbp(gs)}</span></td>`;
     });
     html+='</tr>';
 
@@ -920,7 +1062,8 @@ function renderCalendar(){
             }
           }
           const cellOverflow=(b&&i===run.start)?'overflow:visible;':'';
-          html+=`<td class="${b?'bookingCell':''}${toISO(days[i])===todayIso?' todayCol':''}" data-id="${b?b.id:''}" title="${titleAttr}" style="${cellOverflow}background:${b?color:''};${borderStyle}">${label}</td>`;
+          const cds=toISO(days[i]);
+          html+=`<td class="${b?'bookingCell':'emptyCell'}${cds===todayIso?' todayCol':''}" data-id="${b?b.id:''}" data-date="${cds}" data-apt="${g.apt?g.apt.id:''}" title="${titleAttr}" style="${cellOverflow}background:${b?color:''};${borderStyle}">${label}</td>`;
         }
       });
       html+='</tr>';
@@ -944,16 +1087,152 @@ function renderCalendar(){
   });
   calendarWrap.querySelectorAll('.bookingCell').forEach(td=>{
     td.onclick=()=>{
+      cellPickClear();
       const b=bookings.find(x=>x.id===td.dataset.id);
       if(b)openEditBookingModal(b);
     };
   });
+  calendarWrap.querySelectorAll('.monthCell').forEach(th=>{
+    th.onclick=()=>openMonthModal(th.dataset.from,th.dataset.to,th.dataset.label);
+  });
+  calendarWrap.querySelectorAll('.riskFlag').forEach(el=>{
+    el.onclick=(e)=>{e.stopPropagation();openRiskModal(decodeURIComponent(el.dataset.prop));};
+  });
+  calendarWrap.querySelectorAll('.emptyCell').forEach(td=>{
+    td.onclick=()=>emptyCellClick(td);
+  });
+}
+
+// ### 9c --- click a warning flag on a property's subtotal: list the ranges that are full but still open on Smoobu, block them, show each result or error
+function listingLabel(lid){const l=smoobuListings.find(x=>String(x.id)===String(lid));return l?l.name+' ('+lid+')':String(lid);}
+function resetModalChrome(){
+  const old=document.getElementById('modalMsgWrap');if(old)old.remove();
+  modalOnSave=null;modalOnDelete=null;
+  modalSaveBtn.style.display='none';modalDeleteBtn.style.display='none';
+  setModalStatus('');
+}
+function openRiskModal(propName){
+  const risks=auditSnapshot.risks.filter(r=>r.prop===propName);
+  modalTitle.textContent='Full but open on Smoobu — '+propName;
+  modalFields.innerHTML='';
+  resetModalChrome();
+  const note=document.createElement('div');
+  note.style.cssText='font-size:10px;color:var(--dim);font-weight:normal;margin-bottom:8px;';
+  note.textContent='From the capacity check'+(auditSnapshot.generated_at?' at '+auditSnapshot.generated_at.slice(0,16).replace('T',' ')+' UTC':'')+'. Untick any you do not want blocked.';
+  modalFields.appendChild(note);
+  if(!risks.length){const e=document.createElement('div');e.textContent='Nothing open any more — the next check will clear the flag.';modalFields.appendChild(e);modalBackdrop.classList.add('open');return;}
+  const rows=risks.map(rk=>{
+    const row=document.createElement('div');
+    row.style.cssText='display:flex;gap:8px;align-items:flex-start;padding:5px 0;border-top:1px dashed var(--line);font-size:11px;font-weight:normal;';
+    const cb=document.createElement('input');cb.type='checkbox';cb.checked=true;cb.style.cssText='width:auto;margin:2px 0 0;';
+    const txt=document.createElement('div');txt.style.flex='1';
+    const nights=Math.round((toDate(rk.to)-toDate(rk.from))/86400000)+1;
+    txt.textContent=listingLabel(rk.lid)+' · '+rk.from+' → '+rk.to+' ('+nights+' night'+(nights>1?'s':'')+')';
+    const st=document.createElement('div');st.style.cssText='font-size:10px;margin-top:2px;';
+    txt.appendChild(st);
+    row.appendChild(cb);row.appendChild(txt);modalFields.appendChild(row);
+    return {rk:rk,cb:cb,st:st};
+  });
+  const btn=document.createElement('button');btn.textContent='Block selected';btn.style.cssText='margin:10px 0 0;';
+  btn.onclick=()=>{
+    const picked=rows.filter(x=>x.cb.checked);
+    if(!picked.length){setModalStatus('Tick at least one range.','err');return;}
+    btn.disabled=true;setModalStatus('Blocking…');
+    let ok=0,fail=0;
+    picked.reduce((p,x)=>p.then(()=>{
+      x.st.style.color='var(--dim)';x.st.textContent='Blocking…';
+      return callWorker('blockDates',{apartmentId:x.rk.lid,arrivalDate:x.rk.from,departureDate:toISO(addDays(toDate(x.rk.to),1))}).then(res=>{
+        if(res.status>=200&&res.status<300){ok++;x.st.style.color='var(--accent)';x.st.textContent='Blocked.';x.cb.checked=false;x.cb.disabled=true;}
+        else{fail++;const b=res.body||{};x.st.style.color='var(--danger)';x.st.textContent='Failed (HTTP '+res.status+'): '+(b.detail||b.title||res.error||JSON.stringify(b));}
+      }).catch(err=>{fail++;x.st.style.color='var(--danger)';x.st.textContent='Failed: '+err.message;});
+    }),Promise.resolve()).then(()=>{
+      btn.disabled=false;
+      setModalStatus(ok+' blocked'+(fail?', '+fail+' failed — see below':'')+'.',fail?'err':'ok');
+      return callWorker('runAudit').then(()=>loadAuditSnapshot()).then(renderCalendar).then(loadAlerts).catch(()=>{});
+    });
+  };
+  modalFields.appendChild(btn);
+  modalBackdrop.classList.add('open');
+}
+
+// ### 9d --- month header (sticky label): tap to set/clear every property's threshold override across that month's visible days (blank = leave as is; default value or blank-after-set = back to default)
+function openMonthModal(from,to,label){
+  const today=toISO(new Date()),start=from<today?today:from;
+  modalTitle.textContent='Thresholds — '+label;
+  modalFields.innerHTML='';
+  resetModalChrome();
+  const note=document.createElement('div');
+  note.style.cssText='font-size:10px;color:var(--dim);font-weight:normal;margin-bottom:8px;';
+  if(start>to){note.textContent='These dates are in the past — nothing to adjust.';modalFields.appendChild(note);modalBackdrop.classList.add('open');return;}
+  const days=[];for(let d=start;d<=to;d=toISO(addDays(toDate(d),1)))days.push(d);
+  note.textContent=start+' \u2192 '+to+' ('+days.length+' day'+(days.length>1?'s':'')+'). Empty = leave as is. The default value, or clearing a box you had set, puts that property back to its default.';
+  modalFields.appendChild(note);
+  const rows=apartments.map(a=>{
+    const vals=days.map(d=>{const o=findOverride(a.id,d);return o&&o.threshold_override!=null?Number(o.threshold_override):null;});
+    const uniq=[...new Set(vals)];
+    const init=uniq.length===1&&uniq[0]!==null?String(uniq[0]):'';
+    const wrap=document.createElement('label');
+    wrap.style.cssText='display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:11px;font-weight:normal;color:var(--text);';
+    const nm=document.createElement('span');nm.textContent=a.name+' (default '+a.threshold+')';
+    const inp=document.createElement('input');inp.type='number';inp.min='0';inp.value=init;inp.placeholder=uniq.length>1?'mixed':'default';inp.style.cssText='width:80px;margin:0;';
+    wrap.appendChild(nm);wrap.appendChild(inp);modalFields.appendChild(wrap);
+    return {a:a,inp:inp,init:init};
+  });
+  const apply=(plan,okMsg)=>{
+    if(!plan.length){setModalStatus('Nothing changed.');return;}
+    saveBtn.disabled=true;resetBtn.disabled=true;setModalStatus('Saving…');
+    let fail=null;
+    plan.reduce((p,x)=>p.then(()=>{
+      if(fail)return;
+      return callWorker('setThresholdRange',{apartment_id:x.a.id,from:start,to:to,threshold:x.val}).then(res=>{if(res.error||res.success===false)fail=x.a.name+': '+(res.error||'failed');}).catch(err=>{fail=x.a.name+': '+err.message;});
+    }),Promise.resolve()).then(()=>loadOverrides().then(renderCalendar).then(auditSoon)).then(()=>{
+      saveBtn.disabled=false;resetBtn.disabled=false;
+      if(fail){setModalStatus('Failed — '+fail,'err');return;}
+      setModalStatus(okMsg,'ok');setTimeout(closeModal,600);
+    });
+  };
+  const saveBtn=document.createElement('button');saveBtn.textContent='Save';saveBtn.style.cssText='margin:10px 6px 0 0;';
+  saveBtn.onclick=()=>apply(rows.filter(x=>x.inp.value!==x.init).map(x=>({a:x.a,val:x.inp.value===''?null:Number(x.inp.value)})),'Saved.');
+  const resetBtn=document.createElement('button');resetBtn.textContent='Reset all to default';resetBtn.style.cssText='margin:10px 0 0;';
+  resetBtn.onclick=()=>{
+    if(!confirm('Put every property back to its default threshold for '+start+' \u2192 '+to+'?'))return;
+    apply(apartments.map(a=>({a:a,val:null})),'Reset to defaults.');
+  };
+  modalFields.appendChild(saveBtn);modalFields.appendChild(resetBtn);
+  modalBackdrop.classList.add('open');
+}
+
+// ### 9b --- pick two empty cells to prefill Add Booking with a date range
+let cellPick=null;
+function cellPickClear(){
+  if(cellPick&&cellPick.el)cellPick.el.classList.remove('cellPicked');
+  cellPick=null;
+}
+function emptyCellClick(td){
+  const apt=td.dataset.apt||'';
+  if(!cellPick){
+    cellPick={apt:apt,date:td.dataset.date,el:td};
+    td.classList.add('cellPicked');
+    return;
+  }
+  if(cellPick.el===td){cellPickClear();return;}
+  if(cellPick.apt!==apt){
+    cellPickClear();
+    cellPick={apt:apt,date:td.dataset.date,el:td};
+    td.classList.add('cellPicked');
+    return;
+  }
+  const d1=cellPick.date,d2=td.dataset.date;
+  const arrival=d1<d2?d1:d2,departure=toISO(addDays(toDate(d1<d2?d2:d1),1));
+  cellPickClear();
+  openAddBookingModal(apartments.find(a=>a.id===apt)||null,{arrival:arrival,departure:departure});
 }
 
 // ### 10 --- init
 document.getElementById('calPrevBtn').onclick=()=>{windowStart=addDays(windowStart,-WINDOW_DAYS);renderCalendar();};
 document.getElementById('calNextBtn').onclick=()=>{windowStart=addDays(windowStart,WINDOW_DAYS);renderCalendar();};
-loadApartments().then(loadSmoobuListings).then(loadOverrides).then(loadBookings);
+document.getElementById('calTodayBtn').onclick=()=>{windowStart=defaultWindowStart();renderCalendar();};
+loadApartments().then(loadSmoobuListings).then(loadOverrides).then(loadAuditSnapshot).then(loadBookings);
 loadAlerts();
 </script>
 </body>

@@ -57,6 +57,24 @@
   </div>
 </section>
 
+<section id="liveSection" style="display:none;">
+  <div class="section-head">In our database but still live on Smoobu</div>
+  <div class="section-body">
+    <div class="sub" style="margin:0 0 6px;">These weren't auto-deleted from Smoobu (deletion failed, or they predate that feature). Pick which ones to cancel on Smoobu now — our database is untouched either way.</div>
+    <table><thead><tr><th><input type="checkbox" id="liveAllCb" checked></th><th>Guest</th><th>Property / listing</th><th>Arrive</th><th>Depart</th></tr></thead><tbody id="liveBody"></tbody></table>
+    <button class="warn" id="liveCancelBtn">Cancel selected on Smoobu</button>
+  </div>
+</section>
+
+<section id="blockedSection" style="display:none;">
+  <div class="section-head">Blocked on Smoobu but threshold not met</div>
+  <div class="section-body">
+    <div class="sub" style="margin:0 0 6px;">System-created blocks (from a past capacity hit) where our database no longer shows that property at capacity — likely safe to remove. Checked against each property's threshold, including any per-day override.</div>
+    <table><thead><tr><th><input type="checkbox" id="blkAllCb" checked></th><th>Property / listing</th><th>Blocked</th><th>Count / threshold</th></tr></thead><tbody id="blkBody"></tbody></table>
+    <button class="warn" id="blkUnblockBtn">Unblock selected on Smoobu</button>
+  </div>
+</section>
+
 <section>
   <div class="section-head">Log</div>
   <div class="section-body" style="padding:0;"><div id="log"></div></div>
@@ -65,8 +83,8 @@
 <script>
 // ### 1 --- config & state
 const WORKER_URL='https://smoobu-proxy-v2.ulnetconzept.workers.dev';
-let missing=[],properties=[];
-const fromD=document.getElementById('fromD'),toD=document.getElementById('toD'),nightsN=document.getElementById('nightsN'),statusEl=document.getElementById('status'),body=document.getElementById('body'),log=document.getElementById('log');
+let missing=[],stillLive=[],blockedIdle=[],properties=[];
+const fromD=document.getElementById('fromD'),toD=document.getElementById('toD'),nightsN=document.getElementById('nightsN'),statusEl=document.getElementById('status'),body=document.getElementById('body'),liveBody=document.getElementById('liveBody'),blkBody=document.getElementById('blkBody'),log=document.getElementById('log');
 
 // ### 2 --- worker call helper (text/plain avoids CORS preflight)
 function callWorker(action,extra){
@@ -93,6 +111,8 @@ toD.addEventListener('change',syncNights);
 function earning(b){return Math.max(0,(Number(b.price)||0)-(Number(b['commission-included'])||0));}
 function propName(id){const p=properties.find(x=>(x.listingIds||[]).includes(String(id)));return p?p.name:'(unassigned)';}
 function usable(b){return b.id&&b['guest-name']&&b['guest-name']!=='Blocked Period'&&b['is-blocked-booking']!==true&&b.email!=='blocked@placeholder.local';}
+function isBlock(b){return b.id&&b.apartment&&b.type!=='cancellation'&&(b['is-blocked-booking']===true||b['guest-name']==='Blocked Period'||b.email==='blocked@placeholder.local');}
+function nightsBetween(from,to){const out=[];for(let d=dateObj(from);d<dateObj(to);d.setDate(d.getDate()+1))out.push(toISO(d));return out;}
 
 // ### 5 --- load all Smoobu bookings in the window (paged), diff against our database
 function fetchSmoobu(from,to){
@@ -113,13 +133,33 @@ function loadMissing(){
   Promise.all([
     fetchSmoobu(fromD.value,toD.value),
     callWorker('getSimBookings').then(r=>r.bookings||[]),
-    callWorker('getMeta',{key:'apartments'}).then(r=>r.value||[])
-  ]).then(([sm,db,props])=>{
+    callWorker('getMeta',{key:'apartments'}).then(r=>r.value||[]),
+    callWorker('getDateOverrides').then(r=>r.overrides||[])
+  ]).then(([sm,db,props,overrides])=>{
     properties=props;
     const have=new Set(db.map(x=>x.id)),seen=new Set();
     missing=sm.filter(b=>{if(!usable(b)||seen.has(b.id))return false;seen.add(b.id);return !have.has('smoobu-'+b.id);});
-    statusEl.textContent=sm.length+' Smoobu bookings in window, '+missing.length+' not in our database.';
-    render();
+    const smLive=new Map();
+    sm.forEach(b=>{if(usable(b)&&b.type!=='cancellation')smLive.set(String(b.id),b);});
+    stillLive=db.filter(row=>row.id.startsWith('smoobu-')&&smLive.has(row.id.slice(7))).map(row=>({row:row,sm:smLive.get(row.id.slice(7))}));
+    blockedIdle=sm.filter(isBlock).map(b=>{
+      const ap=b.apartment,prop=properties.find(p=>(p.listingIds||[]).includes(String(ap.id)));
+      if(!prop)return null;
+      const days=nightsBetween(b.arrival,b.departure);
+      if(!days.length)return null;
+      let maxCount=0,minThreshold=Infinity;
+      days.forEach(d=>{
+        const count=db.filter(r=>(prop.listingIds||[]).includes(String(r.m_apartment_id))&&r.m_arrival<=d&&d<r.m_departure).length;
+        const ov=overrides.find(o=>o.apartment_id===prop.id&&o.date===d);
+        const th=ov&&ov.threshold_override!=null?ov.threshold_override:prop.threshold;
+        if(count>maxCount)maxCount=count;
+        if(th<minThreshold)minThreshold=th;
+      });
+      if(maxCount>=minThreshold)return null;
+      return {id:b.id,prop:prop.name,ap:ap,arrival:b.arrival,departure:b.departure,count:maxCount,threshold:minThreshold};
+    }).filter(Boolean);
+    statusEl.textContent=sm.length+' Smoobu bookings in window, '+missing.length+' not in our database, '+stillLive.length+' still live on Smoobu, '+blockedIdle.length+' blocked but under threshold.';
+    render();renderLive();renderBlocked();
   }).catch(e=>{statusEl.textContent='Load failed: '+e.message;});
 }
 document.getElementById('loadBtn').onclick=loadMissing;
@@ -157,6 +197,71 @@ document.getElementById('sendBtn').onclick=()=>{
     }).then(r=>{if(r.success)ok++;else{fail++;logLine('err','#'+b.id+' '+(r.error||'failed'));}}).catch(e=>{fail++;logLine('err','#'+b.id+' '+e.message);});
   })).then(()=>{
     logLine(fail?'err':'ok','Sent '+ok+' OK, '+fail+' failed.');
+    loadMissing();
+  });
+};
+
+// ### 6b --- still-live-on-Smoobu render + cancel
+function renderLive(){
+  liveBody.innerHTML='';
+  stillLive.forEach((x,i)=>{
+    const b=x.row,ap=b.m_apartment_name||b.apartment_name||'';
+    const tr=document.createElement('tr');
+    const cells=['',b.guest_name,ap,b.m_arrival,b.m_departure];
+    cells.forEach((c,k)=>{
+      const td=document.createElement('td');
+      if(k===0){const cb=document.createElement('input');cb.type='checkbox';cb.checked=true;cb.dataset.i=i;td.appendChild(cb);}
+      else td.textContent=c;
+      tr.appendChild(td);
+    });
+    liveBody.appendChild(tr);
+  });
+  document.getElementById('liveAllCb').checked=true;
+  document.getElementById('liveSection').style.display=stillLive.length?'block':'none';
+}
+document.getElementById('liveAllCb').onchange=e=>liveBody.querySelectorAll('input[type=checkbox]').forEach(c=>c.checked=e.target.checked);
+document.getElementById('liveCancelBtn').onclick=()=>{
+  const picked=[...liveBody.querySelectorAll('input[type=checkbox]:checked')].map(c=>stillLive[+c.dataset.i]);
+  if(!picked.length)return;
+  if(!confirm('Cancel '+picked.length+' booking(s) on Smoobu? Our database is not changed.'))return;
+  let ok=0,fail=0;
+  Promise.all(picked.map(x=>callWorker('cancelOnSmoobu',{id:x.row.id})
+    .then(r=>{if(r.success)ok++;else{fail++;logLine('err',x.row.id+' '+(r.error||'failed'));}})
+    .catch(e=>{fail++;logLine('err',x.row.id+' '+e.message);})
+  )).then(()=>{
+    logLine(fail?'err':'ok','Cancelled '+ok+' OK, '+fail+' failed.');
+    loadMissing();
+  });
+};
+
+// ### 6c --- blocked-but-idle render + unblock
+function renderBlocked(){
+  blkBody.innerHTML='';
+  blockedIdle.forEach((x,i)=>{
+    const tr=document.createElement('tr');
+    const cells=['',x.prop+' / '+(x.ap.name||x.ap.id),x.arrival+' → '+x.departure,x.count+' / '+x.threshold];
+    cells.forEach((c,k)=>{
+      const td=document.createElement('td');
+      if(k===0){const cb=document.createElement('input');cb.type='checkbox';cb.checked=true;cb.dataset.i=i;td.appendChild(cb);}
+      else td.textContent=c;
+      tr.appendChild(td);
+    });
+    blkBody.appendChild(tr);
+  });
+  document.getElementById('blkAllCb').checked=true;
+  document.getElementById('blockedSection').style.display=blockedIdle.length?'block':'none';
+}
+document.getElementById('blkAllCb').onchange=e=>blkBody.querySelectorAll('input[type=checkbox]').forEach(c=>c.checked=e.target.checked);
+document.getElementById('blkUnblockBtn').onclick=()=>{
+  const picked=[...blkBody.querySelectorAll('input[type=checkbox]:checked')].map(c=>blockedIdle[+c.dataset.i]);
+  if(!picked.length)return;
+  if(!confirm('Unblock '+picked.length+' date range(s) on Smoobu?'))return;
+  let ok=0,fail=0;
+  Promise.all(picked.map(x=>callWorker('unblockOnSmoobu',{id:x.id})
+    .then(r=>{if(r.success)ok++;else{fail++;logLine('err','#'+x.id+' '+(r.error||'failed'));}})
+    .catch(e=>{fail++;logLine('err','#'+x.id+' '+e.message);})
+  )).then(()=>{
+    logLine(fail?'err':'ok','Unblocked '+ok+' OK, '+fail+' failed.');
     loadMissing();
   });
 };
