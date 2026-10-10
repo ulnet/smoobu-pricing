@@ -8,9 +8,14 @@ binding = "DB"
 database_name = "smoobu_db"
 database_id = "017e23fd-8289-4281-a72c-585e80af40f1"
 
+[[services]]
+binding = "GMAIL"
+service = "gmail-contacts"
+entrypoint = "GmailSync"
+
 [assets]
 directory = "."
 binding = "ASSETS"
 
 [triggers]
-crons = ["*/15 * * * *"]
+crons = ["*/15 * * * *", "0 * * * *", "0 3 * * *"]

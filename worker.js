@@ -1,5 +1,6 @@
 import simActions from './pricing/sim.js';
 import snapshotRates from './pricing/snapshot.js';
+import { runPricing, priceAfterBooking, getPricingStatus } from './pricing/run.js';
 
 // ### 1 --- smoobu api auth helpers
 const BASE_URL = 'https://login.smoobu.com';
@@ -53,6 +54,23 @@ function blockDates(env, apartmentId, arrivalDate, departureDate) {
     apartmentId: Number(apartmentId), arrivalDate, departureDate,
     firstName: 'Blocked', lastName: 'Period', email: 'blocked@placeholder.local'
   });
+}
+function setRateOps(env, apartmentId, operations) {
+  return smoobuRequest(env, 'POST', '/api/rates', null, { apartments: [Number(apartmentId)], operations });
+}
+function pricingDeps(env) {
+  return {
+    getRates: params => getRates(env, params),
+    setRateOps: (id, ops) => setRateOps(env, id, ops),
+    alert: (title, detail) => addAlert(env, 'error', title, detail, ''),
+    telegram: m => sendTelegramAlert(env, m)
+  };
+}
+const GMAIL_TRIGGERS = new Set(['newReservation', 'updateReservation', 'addSimBooking', 'updateSimBooking', 'syncLiveBookings', 'restoreBooking']);
+const PRICE_TRIGGERS = new Set(['newReservation', 'updateReservation', 'cancelReservation', 'deleteReservation', 'addSimBooking', 'updateSimBooking', 'deleteSimBooking']);
+function listingOf(payload) {
+  const d = payload.data || {};
+  return String((d.apartment && d.apartment.id) || d.apartmentId || payload.m_apartment_id || payload.apartment_id || '');
 }
 function setRate(env, apartmentId, from, to, price) {
   return smoobuRequest(env, 'POST', '/api/rates', null, {
@@ -143,6 +161,36 @@ async function setDateOverride(env, apartmentId, date, thresholdOverride, notes)
   return { success: true };
 }
 
+// ### 4b --- clear every per-property threshold override (optionally just one date); day notes are kept
+async function clearThresholdOverrides(env, date) {
+  const w = date ? ' AND date = ?' : '';
+  const b = date ? [date] : [];
+  const n = (await env.DB.prepare(`SELECT COUNT(*) AS c FROM date_overrides WHERE apartment_id != '__day__' AND threshold_override IS NOT NULL${w}`).bind(...b).first()).c;
+  await env.DB.prepare(`UPDATE date_overrides SET threshold_override = NULL WHERE apartment_id != '__day__'${w}`).bind(...b).run();
+  await env.DB.prepare(`DELETE FROM date_overrides WHERE apartment_id != '__day__' AND (notes IS NULL OR notes = '')${w}`).bind(...b).run();
+  return { success: true, cleared: n };
+}
+
+// ### 4c --- set (or clear) one property's threshold override across an inclusive date range; a value equal to the property's default clears it
+async function setThresholdRange(env, apartmentId, from, to, threshold) {
+  const re = /^\d{4}-\d{2}-\d{2}$/;
+  if (!re.test(from || '') || !re.test(to || '') || to < from) return { success: false, error: 'Bad date range' };
+  const metaRow = await env.DB.prepare(`SELECT value FROM meta WHERE key = 'apartments'`).first();
+  const prop = (metaRow ? JSON.parse(metaRow.value) : []).find(a => a.id === apartmentId);
+  if (!prop) return { success: false, error: 'Unknown property: ' + apartmentId };
+  const val = threshold === null || threshold === undefined || threshold === '' || Number(threshold) === Number(prop.threshold) ? null : Number(threshold);
+  if (val !== null && !(val >= 0)) return { success: false, error: 'Bad threshold' };
+  const days = [];
+  for (let d = from; d <= to && days.length < 400; d = addDaysIso(d, 1)) days.push(d);
+  if (val === null) {
+    await env.DB.prepare(`UPDATE date_overrides SET threshold_override = NULL WHERE apartment_id = ? AND date >= ? AND date <= ?`).bind(apartmentId, from, to).run();
+    await env.DB.prepare(`DELETE FROM date_overrides WHERE apartment_id = ? AND date >= ? AND date <= ? AND (notes IS NULL OR notes = '')`).bind(apartmentId, from, to).run();
+  } else {
+    await env.DB.batch(days.map(d => env.DB.prepare(`INSERT INTO date_overrides (apartment_id, date, threshold_override, notes) VALUES (?, ?, ?, '') ON CONFLICT(apartment_id, date) DO UPDATE SET threshold_override = excluded.threshold_override`).bind(apartmentId, d, val)));
+  }
+  return { success: true, days: days.length, override: val };
+}
+
 // ### 5 --- capacity test against dummy data (sim_bookings) — decision only, never touches Smoobu
 async function getPropertyOccupancy(env, prop, arrival, departure) {
   if (!prop.listingIds.length) return 0;
@@ -160,6 +208,45 @@ async function getPropertyOccupancy(env, prop, arrival, departure) {
     d.setDate(d.getDate() + 1);
   }
   return maxCount;
+}
+
+function effThreshold(prop, ovs, d) {
+  const o = ovs.find(x => x.apartment_id === prop.id && x.date === d);
+  return o && o.threshold_override != null ? Number(o.threshold_override) : (Number(prop.threshold) || 0);
+}
+
+// ### 7c --- portfolio-wide (G.Total) capacity: threshold = sum of every property's threshold (per-day overrides included), checked FIRST — when hit, every free listing across every property is blocked
+async function globalCapacityBlock(env, apartments, arrival, departure) {
+  if (!apartments.length) return null;
+  const rows = (await env.DB.prepare(`SELECT m_arrival, m_departure FROM sim_bookings`).all()).results;
+  const ovs = (await env.DB.prepare(`SELECT apartment_id, date, threshold_override FROM date_overrides WHERE date >= ? AND date < ? AND threshold_override IS NOT NULL`).bind(arrival, departure).all()).results;
+  let hitDay = null, last = null;
+  for (let d = arrival; d < departure; d = addDaysIso(d, 1)) {
+    const count = rows.filter(r => r.m_arrival <= d && d < r.m_departure).length;
+    const threshold = apartments.reduce((t, p) => t + effThreshold(p, ovs, d), 0);
+    last = { count, threshold };
+    if (threshold > 0 && count >= threshold) { hitDay = last; break; }
+  }
+  if (!hitDay) return Object.assign({ hit: false }, last);
+  const count = hitDay.count, threshold = hitDay.threshold;
+
+  const allIds = apartments.flatMap(a => a.listingIds || []);
+  const occupied = await getOccupiedApartments(env, arrival, departure);
+  const toBlock = allIds.filter(id => !occupied.has(Number(id)));
+  const failed = [];
+  for (const id of toBlock) {
+    const res = await blockDates(env, id, arrival, departure);
+    if (!(res.status >= 200 && res.status < 300)) failed.push(id + ' (HTTP ' + res.status + ')');
+  }
+  if (failed.length) {
+    await addAlert(env, 'error', 'G.Total block failed — ' + failed.length + ' listing(s) still open', failed.join(', ') + ' — ' + arrival + ' → ' + departure, arrival);
+    await sendTelegramAlert(env, '⚠️ G.Total block FAILED: ' + failed.join(', ') + ' ' + arrival + ' to ' + departure);
+  }
+  if (toBlock.length) {
+    await sendTelegramAlert(env, '🚫 G.Total capacity hit (' + count + '/' + threshold + ') ' + arrival + ' to ' + departure + '. Blocked: ' + toBlock.join(', ') + (failed.length ? ' (failed: ' + failed.join(', ') + ')' : ''));
+    await addAlert(env, 'capacity', 'G.Total capacity hit (' + count + '/' + threshold + ')', 'Blocked ' + toBlock.length + ' listing(s) portfolio-wide ' + arrival + ' → ' + departure, arrival);
+  }
+  return { hit: true, count, threshold, blockedListings: toBlock };
 }
 
 async function testCapacityCheck(env, data) {
@@ -315,6 +402,29 @@ async function removeFromSmoobu(env, smoobuId) {
   return false;
 }
 
+// ### 6e2a --- unblock on Smoobu: only ever deletes a reservation Smoobu itself confirms is a system-created block (guest 'Blocked Period' / placeholder email / is-blocked-booking) — never a real guest booking
+async function unblockOnSmoobu(env, smoobuId) {
+  if (!smoobuId) return { success: false, error: 'Missing id' };
+  const check = await smoobuRequest(env, 'GET', '/api/reservations/' + smoobuId, null, null);
+  if (check.status < 200 || check.status >= 300) return { success: false, error: 'Could not read reservation ' + smoobuId + ' (HTTP ' + check.status + ')' };
+  const r = check.body || {};
+  const isBlock = r['is-blocked-booking'] === true || r['guest-name'] === 'Blocked Period' || r.email === 'blocked@placeholder.local';
+  if (!isBlock) return { success: false, error: 'Reservation ' + smoobuId + ' is not a system block — refusing to delete' };
+  const res = await smoobuRequest(env, 'DELETE', '/api/reservations/' + smoobuId, null, null);
+  if (res.status >= 200 && res.status < 300) return { success: true, id: smoobuId };
+  return { success: false, error: 'HTTP ' + res.status + ' ' + JSON.stringify(res.body).slice(0, 160) };
+}
+
+// ### 6e2b --- manual cancel-on-Smoobu: for a booking already in our DB that is still live on Smoobu (never auto-deleted, or predates that feature) — picked by choice from the Import Bookings "still live on Smoobu" list
+async function cancelOnSmoobu(env, bookingId) {
+  const rid = String(bookingId || '').startsWith('smoobu-') ? bookingId : 'smoobu-' + bookingId;
+  const row = await env.DB.prepare(`SELECT id FROM sim_bookings WHERE id = ?`).bind(rid).first();
+  if (!row) return { success: false, error: 'Not in our database: ' + rid };
+  const smoobuId = rid.replace(/^smoobu-/, '');
+  const ok = await removeFromSmoobu(env, smoobuId);
+  return { success: ok, id: rid };
+}
+
 async function isOurOwnDelete(env, rid) {
   const row = await env.DB.prepare(`SELECT details FROM sim_bookings WHERE id = ?`).bind(rid).first();
   if (!row) return false;
@@ -389,13 +499,15 @@ async function capacityBlock(env, data, earning, deleted) {
   const metaRow = await env.DB.prepare(`SELECT value FROM meta WHERE key = 'apartments'`).first();
   const apartments = metaRow ? JSON.parse(metaRow.value) : [];
   const prop = apartments.find(a => (a.listingIds || []).includes(listingId));
-  if (!prop) return { blocked: false, earning, deleted, reason: 'Listing not mapped to any property' };
+  const global = await globalCapacityBlock(env, apartments, arrival, departure);
+  if (global && global.hit) return { blocked: true, earning, deleted, global };
+  if (!prop) return { blocked: false, earning, deleted, global, reason: 'Listing not mapped to any property' };
 
   const override = await env.DB.prepare(`SELECT threshold_override FROM date_overrides WHERE apartment_id = ? AND date = ?`).bind(prop.id, arrival).first();
   const threshold = override && override.threshold_override != null ? override.threshold_override : prop.threshold;
 
   const count = await getPropertyOccupancy(env, prop, arrival, departure);
-  if (count < threshold) return { blocked: false, earning, deleted, property: prop.name, count, threshold };
+  if (count < threshold) return { blocked: false, earning, deleted, global, property: prop.name, count, threshold };
 
   const occupied = await getOccupiedApartments(env, arrival, departure);
   const toBlock = prop.listingIds.filter(id => !occupied.has(Number(id)));
@@ -410,7 +522,7 @@ async function capacityBlock(env, data, earning, deleted) {
   }
   if (toBlock.length) await sendTelegramAlert(env, '🚫 Capacity hit — ' + prop.name + ' (' + count + '/' + threshold + ') ' + arrival + ' to ' + departure + '. Blocked: ' + toBlock.join(', ') + (failed.length ? ' (failed: ' + failed.join(', ') + ')' : ''));
   await addAlert(env, 'capacity', 'Capacity hit: ' + prop.name + ' (' + count + '/' + threshold + ')', 'Blocked ' + toBlock.length + ' listing(s) ' + arrival + ' → ' + departure, arrival);
-  return { blocked: true, earning, deleted, property: prop.name, count, threshold, blockedListings: toBlock };
+  return { blocked: true, earning, deleted, global, property: prop.name, count, threshold, blockedListings: toBlock };
 }
 
 // ### 10 --- capacity audit (cron every 15 min + on demand): capacity hit in our DB but a listing still open on Smoobu = overbooking risk; open/closed comes from Smoobu's rates endpoint (one call for all listings)
@@ -476,15 +588,20 @@ async function runAudit(env) {
   const avail = await smoobuAvailability(env, apartments.flatMap(a => (a.listingIds || []).map(String)), today, addDaysIso(end, -1));
   let ours = {};
   try { ours = await smoobuOurBlocks(env, today, end); } catch (e) {}
+  const globalHit = new Set();
+  for (let d = today; d < end; d = addDaysIso(d, 1)) {
+    const total = bk.filter(b => b.m_arrival <= d && d < b.m_departure).length;
+    const sum = apartments.reduce((t, p) => t + effThreshold(p, ov, d), 0);
+    if (sum > 0 && total >= sum) globalHit.add(d);
+  }
   const risks = [], stucks = [];
   for (const prop of apartments) {
     const ids = (prop.listingIds || []).map(String);
     const open = {}, stuckD = {};
     for (let d = today; d < end; d = addDaysIso(d, 1)) {
       const count = bk.filter(b => ids.includes(String(b.m_apartment_id)) && b.m_arrival <= d && d < b.m_departure).length;
-      const o = ov.find(x => x.apartment_id === prop.id && x.date === d);
-      const th = o ? o.threshold_override : prop.threshold;
-      if (count < th) { ids.forEach(lid => { if (ours[lid] && ours[lid].has(d)) (stuckD[lid] = stuckD[lid] || []).push(d); }); continue; }
+      const th = effThreshold(prop, ov, d);
+      if (count < th && !globalHit.has(d)) { ids.forEach(lid => { if (ours[lid] && ours[lid].has(d)) (stuckD[lid] = stuckD[lid] || []).push(d); }); continue; }
       ids.forEach(lid => { if (avail[lid] && avail[lid].has(d)) (open[lid] = open[lid] || []).push(d); });
     }
     Object.keys(open).forEach(lid => {
@@ -530,7 +647,37 @@ async function runAudit(env) {
     await sendTelegramAlert(env, '🔒 Stuck block (under capacity but blocked): ' + sk.prop + ' listing ' + sk.lid + ' ' + sk.from + ' to ' + sk.to);
   }
   await setMeta(env, 'audit_state', keep);
+  await setMeta(env, 'audit_snapshot', { generated_at: new Date().toISOString(), risks, stucks });
   return { success: true, from: today, to: end, risks: risks.length, stuck: stucks.length, blocked, autoBlock: !!st.autoBlock };
+}
+
+async function getAuditSnapshot(env) {
+  const row = await env.DB.prepare(`SELECT value FROM meta WHERE key = 'audit_snapshot'`).first();
+  return { success: true, snapshot: row ? JSON.parse(row.value) : { generated_at: null, risks: [], stucks: [] } };
+}
+
+// ### 10b --- direct-site booking recorded in sim_bookings by the direct-site worker: run the capacity decision, and keep the property's whole-property listing (if any) blocked while a room is taken
+async function directBooked(env, data) {
+  const ids = (data.listingIds || []).map(String), arrival = data.arrival, departure = data.departure;
+  if (!ids.length || !arrival || !departure) return { error: 'Missing listing/dates' };
+  const res = await capacityBlock(env, { apartment: { id: ids[0] }, arrival, departure }, 0, false);
+  if (res.error) return res;
+  const metaRow = await env.DB.prepare(`SELECT value FROM meta WHERE key = 'apartments'`).first();
+  const prop = (metaRow ? JSON.parse(metaRow.value) : []).find(a => (a.listingIds || []).map(String).includes(ids[0]));
+  const row = prop ? await env.DB.prepare(`SELECT whole_listing_id FROM site_content WHERE property_id = ?`).bind(prop.id).first().catch(() => null) : null;
+  const wl = row && row.whole_listing_id ? String(row.whole_listing_id) : '';
+  if (wl && !ids.includes(wl) && !(res.blockedListings || []).includes(wl)) {
+    const occupied = await getOccupiedApartments(env, arrival, departure);
+    if (!occupied.has(Number(wl))) {
+      const b = await blockDates(env, wl, arrival, departure);
+      if (!(b.status >= 200 && b.status < 300)) {
+        await addAlert(env, 'error', 'Whole-property block failed (listing ' + wl + ')', 'HTTP ' + b.status + ' — ' + arrival + ' → ' + departure, arrival);
+        await sendTelegramAlert(env, '⚠️ Whole-property listing ' + wl + ' block FAILED ' + arrival + ' to ' + departure);
+        res.wholeBlockFailed = true;
+      } else res.wholeBlocked = wl;
+    }
+  }
+  return res;
 }
 
 // ### 8 --- response helper
@@ -549,9 +696,14 @@ function jsonResponse(obj, status = 200) {
 // ### 9 --- fetch handler
 export default {
   async scheduled(event, env, ctx) {
+    if (event.cron === '0 * * * *' || event.cron === '0 3 * * *') {
+      const near = event.cron === '0 * * * *';
+      ctx.waitUntil(runPricing(env, pricingDeps(env), { scope: near ? 'near' : 'far', trigger: near ? 'hourly' : 'daily', forceDry: false }).catch(e => addAlert(env, 'error', 'Pricing run failed', e.message, '')));
+      return;
+    }
     ctx.waitUntil(runAudit(env).catch(e => addAlert(env, 'error', 'Capacity audit failed', e.message, '')));
   },
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     if (request.method === 'OPTIONS') {
       return new Response(null, {
         status: 204,
@@ -584,16 +736,24 @@ export default {
         else if (action === 'setMeta') result = await setMeta(env, payload.key, payload.value);
         else if (action === 'getApartments') result = await getApartments(env);
         else if (action === 'getBookings') result = await getBookings(env, payload.params || {});
+        else if (action === 'directBooked') result = await directBooked(env, payload);
+        else if (action === 'getApartmentDetail') result = await smoobuRequest(env, 'GET', '/api/apartments/' + encodeURIComponent(String(payload.id || '')), null, null);
         else if (action === 'updateReservation' || action === 'cancelReservation' || action === 'deleteReservation') result = await handleReservationChange(env, action, payload.data || {});
         else if (action === 'getCancelledBookings') result = await getCancelledBookings(env);
         else if (action === 'restoreBooking') result = await restoreBooking(env, payload.id);
         else if (action === 'getRates') result = await getRates(env, payload.params || {});
         else if (action === 'runAudit') result = await runAudit(env);
+        else if (action === 'cancelOnSmoobu') result = await cancelOnSmoobu(env, payload.id);
+        else if (action === 'unblockOnSmoobu') result = await unblockOnSmoobu(env, payload.id);
+        else if (action === 'getAuditSnapshot') result = await getAuditSnapshot(env);
         else if (action === 'getAlerts') result = await getAlerts(env);
         else if (action === 'dismissAlert') result = await dismissAlert(env, payload.id);
         else if (action === 'syncLiveBookings') result = await syncLiveBookings(env, payload.from, payload.to);
+        else if (action === 'blockDates') result = await blockDates(env, payload.apartmentId, payload.arrivalDate, payload.departureDate);
         else if (action === 'setRate') result = await setRate(env, payload.apartmentId, payload.from, payload.to, payload.price);
         else if (action === 'getDateOverrides') result = await getDateOverrides(env);
+        else if (action === 'setThresholdRange') result = await setThresholdRange(env, payload.apartment_id, payload.from, payload.to, payload.threshold);
+        else if (action === 'clearThresholdOverrides') result = await clearThresholdOverrides(env, payload.date);
         else if (action === 'setDateOverride') result = await setDateOverride(env, payload.apartment_id, payload.date, payload.threshold_override, payload.notes);
         else if (action === 'testCapacityCheck') result = await testCapacityCheck(env, payload.data || {});
         else if (action === 'newReservation') result = await handleSmoobuWebhook(env, payload.data || {});
@@ -601,8 +761,12 @@ export default {
         else if (action === 'addExpense') result = await addExpense(env, payload);
         else if (action === 'deleteExpense') result = await deleteExpense(env, payload.id);
         else if (action === 'snapshotSmoobuRates') result = await snapshotRates(env, payload, getRates);
+        else if (action === 'runPricing') result = await runPricing(env, pricingDeps(env), { scope: payload.scope || 'all', apartmentId: payload.apartmentId, forceDry: payload.forceDry !== false, preview: !!payload.preview, draft: payload.draft || null, trigger: 'manual' });
+        else if (action === 'getPricingStatus') result = await getPricingStatus(env);
         else if (simActions[action]) result = await simActions[action](env, payload);
         else result = { error: 'Unknown or missing action' };
+        if (PRICE_TRIGGERS.has(action) && result && !result.error) ctx.waitUntil(priceAfterBooking(env, pricingDeps(env), listingOf(payload)).catch(() => {}));
+        if (GMAIL_TRIGGERS.has(action) && env.GMAIL && result && !result.error) ctx.waitUntil(Promise.resolve().then(() => env.GMAIL.sync()).catch(() => {}));
         return jsonResponse(result);
       }
 
