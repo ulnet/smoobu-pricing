@@ -802,7 +802,8 @@ export default {
         const action = payload.action;
         if (!authorized(request, env, action, payload.token)) return jsonResponse({ error: 'unauthorized' }, 401);
         let result;
-        if (action === 'getSimBookings') result = await getSimBookings(env);
+        if (action === 'checkKey') result = { success: true, enforced: !!env.API_TOKEN };
+        else if (action === 'getSimBookings') result = await getSimBookings(env);
         else if (action === 'addSimBooking') result = await addSimBooking(env, payload);
         else if (action === 'updateSimBooking') result = await updateSimBooking(env, payload.id, payload);
         else if (action === 'deleteSimBooking') result = await deleteSimBooking(env, payload.id);

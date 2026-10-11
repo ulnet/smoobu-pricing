@@ -68,7 +68,6 @@
 <div style="text-align:left;">
 <button id="addAptBtn">Manage Properties</button>
 <button id="calcBtn">Calculator</button>
-<button id="importBtn">Import from Smoobu</button>
 <button id="canBtn">Cancelled bookings</button>
 <button id="audBtn">Capacity check</button>
 <button id="resetBtn" class="danger">Reset</button>
@@ -114,22 +113,6 @@
     <h3>Cancelled bookings</h3>
     <div style="font-size:10px;color:var(--dim);font-weight:normal;margin-bottom:8px;">Removed automatically when Smoobu cancels them. Restore puts a booking back on the calendar.</div>
     <div id="canList" style="font-weight:normal;"></div>
-  </div>
-</div>
-
-<div class="modalBackdrop" id="impBackdrop">
-  <div class="modalBox" style="max-width:640px;">
-    <button id="impXBtn" style="position:absolute;top:8px;right:8px;padding:3px 8px;">&times;</button>
-    <h3>Import from Smoobu</h3>
-    <div style="display:flex;gap:6px;align-items:flex-end;flex-wrap:wrap;">
-      <label>From<input type="date" id="impFrom"></label>
-      <label style="width:70px;">Nights<input type="number" id="impNights" min="1" value="180"></label>
-      <label>To<input type="date" id="impTo"></label>
-      <button id="impLoadBtn">Load missing</button>
-    </div>
-    <div id="impStatus" style="font-size:10px;color:var(--dim);margin:8px 0;font-weight:normal;"></div>
-    <div id="impList" style="font-weight:normal;"></div>
-    <div class="modalBtnRow" style="margin:10px 0 0;border:0;padding:0;"><button id="impSendBtn" style="display:none">Send selected</button></div>
   </div>
 </div>
 
@@ -232,15 +215,6 @@ function openPropertySummary(apt){
   stats.style.cssText='margin-top:10px;font-size:11px;color:var(--dim);';
   stats.innerHTML='Listings: '+(apt.listingIds||[]).length+'<br>Bookings: '+list.length+' ('+upcoming.length+' upcoming)<br>Nights: '+nights+'<br>Earnings: '+fmtGbp(earn);
   modalFields.appendChild(stats);
-
-  const btnRow=document.createElement('div');
-  btnRow.style.cssText='margin-top:12px;padding-top:10px;border-top:1px dashed var(--line);display:flex;gap:8px;';
-  const addBtn=document.createElement('button');addBtn.textContent='+ Add booking';
-  addBtn.onclick=()=>{closeModal();openAddBookingModal(apt);};
-  const editBtn=document.createElement('button');editBtn.textContent='Edit properties';
-  editBtn.onclick=()=>{closeModal();openPropertiesDialog();};
-  btnRow.appendChild(addBtn);btnRow.appendChild(editBtn);
-  modalFields.appendChild(btnRow);
 
   modalBackdrop.classList.add('open');
   document.getElementById('ps_thSave').onclick=()=>{
@@ -389,76 +363,6 @@ function openPropertiesDialog(){
   modalBackdrop.classList.add('open');
 }
 addAptBtn.onclick=openPropertiesDialog;
-// ### 3b2 --- import missing Smoobu bookings (dialog): loads Smoobu bookings in a window that are not in our db, send picked ones
-const impBackdrop=document.getElementById('impBackdrop'),impFrom=document.getElementById('impFrom'),impTo=document.getElementById('impTo'),impNights=document.getElementById('impNights'),impStatus=document.getElementById('impStatus'),impList=document.getElementById('impList'),impSendBtn=document.getElementById('impSendBtn');
-let impMissing=[];
-const impEarn=b=>Math.max(0,(Number(b.price)||0)-(Number(b['commission-included'])||0));
-const impUsable=b=>b.id&&b['guest-name']&&b['guest-name']!=='Blocked Period'&&b['is-blocked-booking']!==true&&b.email!=='blocked@placeholder.local';
-const impSyncTo=()=>{const n=parseInt(impNights.value,10);if(!impFrom.value||!n||n<1)return;impTo.value=toISO(addDays(toDate(impFrom.value),n));};
-const impMin=()=>{if(impFrom.value)impTo.min=toISO(addDays(toDate(impFrom.value),1));};
-impNights.oninput=impSyncTo;
-impFrom.onchange=()=>{impMin();impSyncTo();};
-impTo.onchange=()=>{if(!impFrom.value||!impTo.value)return;const n=Math.round((toDate(impTo.value)-toDate(impFrom.value))/86400000);if(n>=1)impNights.value=n;};
-document.getElementById('importBtn').onclick=()=>{
-  if(!impFrom.value){impFrom.value=toISO(new Date());impMin();impSyncTo();}
-  impBackdrop.classList.add('open');
-};
-document.getElementById('impXBtn').onclick=()=>impBackdrop.classList.remove('open');
-function impFetch(from,to){
-  const all=[];
-  const next=page=>callWorker('getBookings',{params:{from:from,to:to,page:page,pageSize:100}}).then(res=>{
-    const b=res.body||{};
-    (b.bookings||[]).forEach(x=>all.push(x));
-    if(b.page_count&&page<b.page_count&&page<30)return next(page+1);
-  });
-  return next(1).then(()=>all);
-}
-function impLoad(){
-  if(!impFrom.value||!impTo.value||impTo.value<=impFrom.value){impStatus.textContent='Pick a valid window (at least 1 night).';return;}
-  impStatus.textContent='Loading...';impList.innerHTML='';impSendBtn.style.display='none';
-  return Promise.all([impFetch(impFrom.value,impTo.value),callWorker('getSimBookings').then(r=>r.bookings||[])]).then(([sm,db])=>{
-    const have=new Set(db.map(x=>x.id)),seen=new Set();
-    impMissing=sm.filter(b=>{if(!impUsable(b)||seen.has(b.id))return false;seen.add(b.id);return !have.has('smoobu-'+b.id);});
-    impStatus.textContent=sm.length+' Smoobu bookings in window, '+impMissing.length+' not in our database.';
-    impRender();
-  }).catch(e=>{impStatus.textContent='Load failed: '+e.message;});
-}
-function impRender(){
-  impList.innerHTML='';
-  if(!impMissing.length)return;
-  const t=document.createElement('table');t.style.cssText='width:100%;font-size:11px;border-collapse:collapse;';
-  const h=document.createElement('tr');
-  const all=document.createElement('input');all.type='checkbox';all.checked=true;all.style.width='auto';
-  all.onchange=()=>t.querySelectorAll('.impCb').forEach(c=>c.checked=all.checked);
-  const th0=document.createElement('th');th0.appendChild(all);h.appendChild(th0);
-  ['Guest','Listing','Arrive','Depart','\u00a3'].forEach(x=>{const th=document.createElement('th');th.textContent=x;th.style.textAlign='left';h.appendChild(th);});
-  t.appendChild(h);
-  impMissing.forEach((b,i)=>{
-    const ap=b.apartment||{},prop=resolveApartment(String(ap.id));
-    const tr=document.createElement('tr');
-    const c0=document.createElement('td');const cb=document.createElement('input');cb.type='checkbox';cb.checked=true;cb.className='impCb';cb.dataset.i=i;cb.style.width='auto';c0.appendChild(cb);tr.appendChild(c0);
-    [b['guest-name']+(b.type==='cancellation'?' (cancelled in Smoobu)':''),(prop?prop.name+' / ':'')+(ap.name||ap.id),b.arrival,b.departure,impEarn(b).toFixed(2)].forEach(x=>{const td=document.createElement('td');td.textContent=x;td.style.cssText='padding:3px 4px;border-top:1px dashed var(--line);';tr.appendChild(td);});
-    t.appendChild(tr);
-  });
-  impList.appendChild(t);
-  impSendBtn.style.display='';
-}
-document.getElementById('impLoadBtn').onclick=impLoad;
-impSendBtn.onclick=()=>{
-  const picked=[...impList.querySelectorAll('.impCb:checked')].map(c=>impMissing[+c.dataset.i]);
-  if(!picked.length)return;
-  if(!confirm('Send '+picked.length+' booking(s) to the database?'))return;
-  let ok=0,fail=0;
-  Promise.all(picked.map(b=>{
-    const ap=b.apartment||{};
-    return callWorker('addSimBooking',{
-      id:'smoobu-'+b.id,reference_id:b['reference-id']||'',apartment_id:String(ap.id||''),apartment_name:ap.name||'',
-      guest_name:b['guest-name'],channel:(b.channel&&b.channel.name)||'',arrival:b.arrival,departure:b.departure,
-      details:{contact:b.phone||'',note:'',guests:(Number(b.adults)||0)+(Number(b.children)||0)||'',price:impEarn(b)}
-    }).then(r=>{if(r.success)ok++;else fail++;}).catch(()=>{fail++;});
-  })).then(()=>loadBookings()).then(()=>impLoad()).then(()=>{auditSoon();impStatus.textContent='Sent '+ok+' OK, '+fail+' failed. '+impStatus.textContent;});
-};
-
 // ### 3b3 --- cancelled bookings archive (dialog) + restore
 const canBackdrop=document.getElementById('canBackdrop'),canList=document.getElementById('canList');
 function restoreBooking(id){
@@ -585,19 +489,26 @@ setInterval(loadAlerts,60000);
 const resetBtn=document.getElementById('resetBtn');
 resetBtn.onclick=()=>{
   if(!confirm('Delete ALL sim bookings and clear ALL padded thresholds?'))return;
+  const key=window.prompt('Enter the access key to confirm the reset:');
+  if(key===null)return;
   resetBtn.disabled=true;
-  setStatus('Resetting…');
-  const ov=overrides.filter(o=>o.apartment_id!=='__day__'&&o.threshold_override!=null);
-  Promise.all([
-    ...bookings.map(b=>callWorker('deleteSimBooking',{id:b.id})),
-    ...ov.map(o=>callWorker('setDateOverride',{apartment_id:o.apartment_id,date:o.date,threshold_override:null,notes:o.notes||''}))
-  ]).then(()=>loadBookings()).then(()=>loadOverrides()).then(renderCalendar).then(()=>{
-    resetBtn.disabled=false;
-    setStatus('Reset done.','ok');
-  }).catch(err=>{
-    resetBtn.disabled=false;
-    setStatus('Reset failed: '+err.message);
-  });
+  setStatus('Checking key\u2026','ok');
+  fetch(WORKER_URL,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({action:'checkKey',token:key.trim()})})
+    .then(r=>r.json()).then(j=>{
+      if(!j.success)throw new Error('Wrong access key \u2014 nothing was reset.');
+      setStatus('Resetting\u2026','ok');
+      const ov=overrides.filter(o=>o.apartment_id!=='__day__'&&o.threshold_override!=null);
+      return Promise.all([
+        ...bookings.map(b=>callWorker('deleteSimBooking',{id:b.id})),
+        ...ov.map(o=>callWorker('setDateOverride',{apartment_id:o.apartment_id,date:o.date,threshold_override:null,notes:o.notes||''}))
+      ]);
+    }).then(()=>loadBookings()).then(()=>loadOverrides()).then(renderCalendar).then(()=>{
+      resetBtn.disabled=false;
+      setStatus('Reset done.','ok');
+    }).catch(err=>{
+      resetBtn.disabled=false;
+      setStatus(err.message);
+    });
 };
 
 // ### 4c --- smoobu listings catalog + manually-added listings (stored in meta as manual_listings)
@@ -1147,13 +1058,17 @@ function renderCalendar(){
 }
 
 // ### 9e --- all notes from today onward (day notes + booking notes), under the calendar; click a row to jump the calendar there
+function shortDate(iso){
+  const d=toDate(iso),y=d.getFullYear();
+  return d.getDate()+' '+monthNames[d.getMonth()]+(y!==new Date().getFullYear()?" '"+String(y).slice(2):'');
+}
 function renderNotes(){
   const todayIso=toISO(new Date()),list=[];
   overrides.forEach(o=>{if(o.apartment_id==='__day__'&&o.notes&&o.date>=todayIso)list.push({date:o.date,src:'Day',note:o.notes});});
   bookings.forEach(b=>{
     if(b.details&&b.details.note&&b.m_departure>todayIso){
       const pr=resolveApartment(String(b.m_apartment_id));
-      list.push({date:b.m_arrival<todayIso?todayIso:b.m_arrival,src:(b.guest_name||'Booking')+' \u00b7 '+(pr?pr.name:(b.m_apartment_name||''))+(b.room_number?' r'+b.room_number:''),note:b.details.note,booking:b.m_arrival+' \u2192 '+b.m_departure});
+      list.push({date:b.m_arrival<todayIso?todayIso:b.m_arrival,src:(b.guest_name||'Booking')+' \u00b7 '+(pr?pr.name:(b.m_apartment_name||''))+(b.room_number?' r'+b.room_number:''),note:b.details.note,booking:shortDate(b.m_arrival)+' \u2192 '+shortDate(b.m_departure)});
     }
   });
   list.sort((a,b)=>a.date.localeCompare(b.date));
@@ -1167,7 +1082,7 @@ function renderNotes(){
   t.appendChild(hr);
   list.forEach(n=>{
     const tr=document.createElement('tr');tr.style.cursor='pointer';
-    [n.date+(n.booking?'':''),n.src+(n.booking?' ('+n.booking+')':''),n.note].forEach((x,k)=>{
+    [shortDate(n.date),n.src+(n.booking?' ('+n.booking+')':''),n.note].forEach((x,k)=>{
       const td=document.createElement('td');td.textContent=x;
       td.style.cssText='padding:4px 6px;border-bottom:1px dashed var(--line);vertical-align:top;'+(k===2?'white-space:pre-wrap;':'');
       tr.appendChild(td);
