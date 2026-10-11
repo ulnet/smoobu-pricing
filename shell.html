@@ -170,6 +170,7 @@
 
 </div>
 
+<script src="api.js"></script>
 <script>
 const $ = (id) => document.getElementById(id);
 
@@ -308,12 +309,7 @@ const typeLabels = { iframe_url: "URL / Link", custom_html: "HTML" };
 const PROXY_BASE = "https://smoobu-proxy-v2.ulnetconzept.workers.dev";
 
 async function proxy(action, extra = {}) {
-  const res = await fetch(PROXY_BASE, {
-    method: "POST",
-    headers: { "Content-Type": "text/plain;charset=utf-8" },
-    body: JSON.stringify({ action, ...extra }),
-  });
-  return JSON.parse(await res.text());
+  return apiPost(PROXY_BASE, { action, ...extra });
 }
 async function getTrash() { const r = await proxy("getMeta", { key: "console_trash" }); return r.value || []; }
 async function setTrash(list) { const r = await proxy("setMeta", { key: "console_trash", value: list }); return !!r.success; }

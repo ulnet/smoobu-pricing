@@ -87,6 +87,7 @@
   </div>
 </section>
 
+<script src="api.js"></script>
 <script>
 // ### 1 --- config & state
 const WORKER_URL='https://smoobu-proxy-v2.ulnetconzept.workers.dev';
@@ -95,8 +96,7 @@ const monthInput=document.getElementById('monthInput'),loadBtn=document.getEleme
 
 // ### 2 --- worker call helper
 function callWorker(action,extra){
-  return fetch(WORKER_URL,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify(Object.assign({action:action},extra||{}))})
-    .then(r=>r.text()).then(t=>{try{return JSON.parse(t);}catch(e){throw new Error('Non-JSON: '+t.slice(0,200));}});
+  return apiPost(WORKER_URL,Object.assign({action:action},extra||{}));
 }
 
 // ### 3 --- date helpers

@@ -76,9 +76,6 @@ params. Everything else is POST with `{action, ...}`:
   `setRate {apartmentId, from, to, price}`
 - `getDateOverrides`, `setDateOverride {apartment_id, date,
   threshold_override, notes}`
-- `testCapacityCheck {data}` — dry-run capacity decision against
-  `sim_bookings` (dummy data). Never calls Smoobu. Used for testing the
-  threshold/override logic safely.
 - `newReservation {data}` — **the real, live webhook handler.**
   `handleSmoobuWebhook()`. Resolves the listing to its property, checks
   live Smoobu occupancy for that property's listings (NOT `sim_bookings`),
@@ -97,14 +94,6 @@ params. Everything else is POST with `{action, ...}`:
   (Grand Total row, per-property subtotal rows, per-day threshold
   overrides/notes via a shared modal), Add/Edit Booking modals supporting
   multiple date ranges per guest in one go.
-- `capacity-test.html` — fires `testCapacityCheck` repeatedly against dummy
-  data to prove the threshold/alert logic works before trusting it live.
-- `webhook-live-test.html` — fires the REAL `newReservation` action. Has a
-  confirm dialog because it can actually call `blockDates` for real.
-- `price-block-console.html` — Price Setter (flat/sequence/random pricing
-  across a date range, editable preview, apply) + block/rate console,
-  listings grouped by property, actions retry once automatically then offer
-  a manual retry button on permanent failure.
 - `earnings.html` — earnings by month and month-to-date (allocates each
   booking's total price evenly across its nights, then sums whichever
   nights fall in the selected range), per-property breakdown, a simple
@@ -127,11 +116,7 @@ params. Everything else is POST with `{action, ...}`:
   Worker's OPTIONS handler violated this, which silently broke every POST
   from a browser (preflight failure reads as a generic "Failed to fetch"
   with zero useful detail). Fixed; don't reintroduce.
-- `testCapacityCheck` reads from `sim_bookings` (dummy data).
-  `handleSmoobuWebhook` reads live Smoobu occupancy via `getBookings`. These
-  are deliberately separate — never let a real decision be made from dummy
-  data, and never expect the dummy-data test path to reflect real Smoobu
-  state.
+- Never let a real blocking decision be made from simulator data: rows with id `simgen-…` (written by the pricing simulator) are excluded from every capacity count (webhook, G.Total, audit) and hidden in the tracker.
 - `table-layout:fixed` sizes columns off the FIRST row's cells — if a
   calendar-style table has a colspan'd header row first, use an explicit
   `<colgroup>` or columns render inconsistent widths.
@@ -155,7 +140,7 @@ into the Cloudflare dashboard editor.
 - `handleSmoobuWebhook` now counts capacity from `sim_bookings` (not live Smoobu), then blocks via Smoobu. `getOccupiedApartments` ignores Smoobu cancellations.
 - `cancelReservation`/`deleteReservation` webhooks archive the booking into `cancelled_bookings` (restorable: `getCancelledBookings`, `restoreBooking`) and raise an alert; `updateReservation` only alerts. Blocked/placeholder bookings are ignored.
 - Alerts live in meta key `alerts` (`getAlerts`, `dismissAlert`); shown as the red bar on the tracker.
-- Pages: `sim-booking-tracker.html`, `price-block.html` (tabs: Price Setter / Block Dates), `earnings.html`, `import-bookings.html` (standalone copy of the tracker's import dialog), `capacity-test.html`, `webhook-live-test.html`.
+- Pages: `sim-booking-tracker.html`, `price-block.html` (tabs: Price Setter / Block Dates), `earnings.html`, `import-bookings.html` (standalone copy of the tracker's import dialog), `db-view.html`, `pricing.html`, `shell.html`, plus shared `api.js`.
 - **Auto-delete (live):** on `newReservation` the worker saves the booking, then DELETEs it from Smoobu (`/api/reservations/{id}`) so the calendar opens online, marking `details.smoobu_deleted_at` first; cancel webhooks for that id within 1h are ignored (no archive, no alert). It never deletes unless the DB save succeeded. Capacity check then runs on our DB; blocking hits all free listings of the property.
 - Telegram credentials are Cloudflare secrets (`TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`), no longer in code. `updateReservation`: unknown id = treated as a new reservation; known id = our copy updated (manual calendar edits kept), capacity re-checked, quietly re-deleted from Smoobu.
 - **Capacity audit:** cron every 15 min (`wrangler.toml` [triggers]) + `runAudit` on demand and after tracker edits. Counts capacity from our DB (60 days, settings in meta `audit_settings`: autoBlock default off, days), and gets open/closed per listing from Smoobu's rates endpoint (`getRates`, one call; array params must be sent as `apartments%5B0%5D=id` — plain `apartments[]` gives 401). `available:0` also covers linked/related units, which the reservations list misses. Webhook block calls are now checked; failures raise an error alert + Telegram.
@@ -183,3 +168,5 @@ into the Cloudflare dashboard editor.
 - **One merged alert per audit run:** `runAudit` now replaces (via `replaceAlerts`) a single `risk` alert and a single `stuck` alert listing every property and date range, and sends ONE Telegram message only when a range is new (auto-block: one summary alert + one Telegram, plus one merged error if some failed). Tracker: the ⚠ "full but open" flag now lives on the **G.Total row** (tap = modal of every property's ranges, grouped by property, with Block selected); property rows keep only the 🔒 stuck flag. G.Total row is lighter than the date row. Under the calendar, `renderNotes()` lists day notes + booking notes from today onward (click a row to jump the calendar).
 - **G.Total mode (meta `audit_settings.globalMode`, set in the tracker's Capacity check dialog):** `all` (default; G.Total hit blocks every property, checked first), `propertyFirst` (the full property is blocked by the per-property rule first, then all properties), `off` (G.Total never blocks and is ignored by the audit). Both ⚠ (full but open) and 🔒 (stuck) flags now live on the G.Total row; stuck snapshot entries carry `blocks:[{id,lid,from,to}]` (our Smoobu block reservations) so the 🔒 dialog can "Unblock selected" via `unblockOnSmoobu`. `auditSoon()` (after any manual add/edit/delete/override) re-runs the audit in ~0.7s and auto-opens the ⚠ dialog when that edit produced a new full-but-open range.
 - **Blocking rules are two independent switches (supersede `globalMode`):** `audit_settings.blockProperty` (default true: block a property when it reaches its own threshold) and `audit_settings.blockTotal` (default true: block ALL properties when the portfolio total reaches the summed threshold; checked first). Both off = no automatic blocking. The audit's "full" test, G.Total flags and stuck detection follow the same switches; an old `globalMode:'off'` is read as blockTotal=false. Property names can be edited in Manage Properties (name box, saves on change) and the property summary; the property `id` never changes, so overrides/history stay attached.
+- **Cleanup + hardening (current):** removed `capacity-test.html`, `webhook-live-test.html`, `README.md`, the `testCapacityCheck` and `syncLiveBookings` actions and the old `global_threshold` meta key. Alerts now live in their own `alerts` table (auto-created, old meta list imported once, pruned to 200). `simgen-` rows never take part in capacity decisions.
+- **Access key:** every page loads `api.js` (`apiPost` sends `token`; it asks for the key once per browser, kept in localStorage `api_token`). The worker enforces it only when the secret `API_TOKEN` exists (`wrangler secret put API_TOKEN`; `wrangler secret delete API_TOKEN` turns enforcement off). Exempt: service-binding calls (request host `smoobu-proxy-v2`, i.e. direct-site) and Smoobu's four webhook actions (`newReservation`, `updateReservation`, `cancelReservation`, `deleteReservation`); those can be locked with the secret `WEBHOOK_KEY` once Smoobu's webhook URL is changed to end in `/?k=<key>`.

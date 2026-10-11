@@ -146,6 +146,7 @@
   </div>
 </div>
 
+<script src="api.js"></script>
 <script>
 // ### 1 --- config & state
 const WORKER_URL='https://smoobu-proxy-v2.ulnetconzept.workers.dev';
@@ -162,8 +163,8 @@ function setModalStatus(msg,kind){
 
 // ### 2 --- worker call helper (text/plain avoids a CORS preflight — do not change to application/json)
 function callWorker(action,extra){
-  return fetch(WORKER_URL,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify(Object.assign({action:action},extra||{}))})
-    .then(r=>r.text()).then(t=>{let res;try{res=JSON.parse(t);}catch(e){throw new Error('Non-JSON: '+t.slice(0,200));}
+  return apiPost(WORKER_URL,Object.assign({action:action},extra||{}))
+    .then(res=>{
       setStatus(res.error?('Worker error: '+res.error):'');
       return res;
     })
@@ -180,7 +181,7 @@ const monthNames=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','N
 // ### 4 --- load from db
 function loadBookings(){
   return callWorker('getSimBookings').then(res=>{
-    bookings=res.bookings||[];
+    bookings=(res.bookings||[]).filter(b=>!String(b.id).startsWith('simgen-'));
     bookings.forEach(b=>{try{b.details=JSON.parse(b.details||'{}');}catch(e){b.details={};}});
     refreshGuestDatalist();
     renderCalendar();
