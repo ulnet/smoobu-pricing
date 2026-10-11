@@ -210,6 +210,27 @@ async function getPropertyOccupancy(env, prop, arrival, departure) {
   return maxCount;
 }
 
+// ### 7a --- alert wording is per PROPERTY + date range (a property is closed or open as a whole); listing ids only appear in detail lines
+function propOfListing(apartments, id) {
+  return apartments.find(a => (a.listingIds || []).map(String).includes(String(id)));
+}
+function groupByProperty(apartments, ids) {
+  const g = {};
+  ids.forEach(id => { const p = propOfListing(apartments, id); const n = p ? p.name : '(unassigned)'; g[n] = (g[n] || 0) + 1; });
+  return g;
+}
+function groupText(g) {
+  return Object.keys(g).map(n => n + ' (' + g[n] + ' listing' + (g[n] > 1 ? 's' : '') + ')').join(', ');
+}
+async function blockMany(env, ids, arrival, departure) {
+  const failed = [];
+  for (const id of ids) {
+    const res = await blockDates(env, id, arrival, departure);
+    if (!(res.status >= 200 && res.status < 300)) failed.push({ id: String(id), status: res.status });
+  }
+  return failed;
+}
+
 function effThreshold(prop, ovs, d) {
   const o = ovs.find(x => x.apartment_id === prop.id && x.date === d);
   return o && o.threshold_override != null ? Number(o.threshold_override) : (Number(prop.threshold) || 0);
@@ -233,18 +254,17 @@ async function globalCapacityBlock(env, apartments, arrival, departure) {
   const allIds = apartments.flatMap(a => a.listingIds || []);
   const occupied = await getOccupiedApartments(env, arrival, departure);
   const toBlock = allIds.filter(id => !occupied.has(Number(id)));
-  const failed = [];
-  for (const id of toBlock) {
-    const res = await blockDates(env, id, arrival, departure);
-    if (!(res.status >= 200 && res.status < 300)) failed.push(id + ' (HTTP ' + res.status + ')');
-  }
+  const failed = await blockMany(env, toBlock, arrival, departure);
+  const span = arrival + ' \u2192 ' + departure;
   if (failed.length) {
-    await addAlert(env, 'error', 'G.Total block failed — ' + failed.length + ' listing(s) still open', failed.join(', ') + ' — ' + arrival + ' → ' + departure, arrival);
-    await sendTelegramAlert(env, '⚠️ G.Total block FAILED: ' + failed.join(', ') + ' ' + arrival + ' to ' + departure);
+    const fg = groupByProperty(apartments, failed.map(f => f.id));
+    await addAlert(env, 'error', 'G.Total block incomplete — ' + Object.keys(fg).join(', ') + ' still partly open', span + ' \u00b7 ' + failed.map(f => f.id + ' (HTTP ' + f.status + ')').join(', '), arrival);
+    await sendTelegramAlert(env, '\u26a0\ufe0f G.Total block INCOMPLETE ' + span + ': ' + groupText(fg) + ' could not be blocked');
   }
   if (toBlock.length) {
-    await sendTelegramAlert(env, '🚫 G.Total capacity hit (' + count + '/' + threshold + ') ' + arrival + ' to ' + departure + '. Blocked: ' + toBlock.join(', ') + (failed.length ? ' (failed: ' + failed.join(', ') + ')' : ''));
-    await addAlert(env, 'capacity', 'G.Total capacity hit (' + count + '/' + threshold + ')', 'Blocked ' + toBlock.length + ' listing(s) portfolio-wide ' + arrival + ' → ' + departure, arrival);
+    const g = groupByProperty(apartments, toBlock);
+    await sendTelegramAlert(env, '\ud83d\udeab G.Total full (' + count + '/' + threshold + ') \u2014 all properties blocked ' + span + ': ' + Object.keys(g).join(', '));
+    await addAlert(env, 'capacity', 'G.Total full (' + count + '/' + threshold + ') \u2014 all properties blocked', span + ' \u00b7 ' + groupText(g), arrival);
   }
   return { hit: true, count, threshold, blockedListings: toBlock };
 }
@@ -336,6 +356,24 @@ async function addAlert(env, type, title, detail, date, ref) {
     list.unshift({ id: crypto.randomUUID(), type, title, detail: detail || '', date: date || '', ref: ref || '', ts: new Date().toISOString() });
     await setMeta(env, 'alerts', list.slice(0, 100));
   } catch (e) {}
+}
+
+async function replaceAlerts(env, type, title, detail, date) {
+  try {
+    const row = await env.DB.prepare(`SELECT value FROM meta WHERE key = 'alerts'`).first();
+    const list = (row ? JSON.parse(row.value) : []).filter(a => a.type !== type);
+    if (title) list.unshift({ id: crypto.randomUUID(), type, title, detail: detail || '', date: date || '', ref: '', ts: new Date().toISOString() });
+    await setMeta(env, 'alerts', list.slice(0, 100));
+  } catch (e) {}
+}
+
+const MON3 = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+function fmtDay(iso) { return Number(iso.slice(8, 10)) + ' ' + MON3[Number(iso.slice(5, 7)) - 1]; }
+function fmtRange(from, to) { return from === to ? fmtDay(from) : fmtDay(from) + '\u2013' + fmtDay(to); }
+function summarize(ranges, suffix) {
+  const by = {};
+  ranges.forEach(x => (by[x.prop] = by[x.prop] || []).push(x));
+  return Object.keys(by).map(n => n + ': ' + by[n].map(x => fmtRange(x.from, x.to)).join(', ') + (suffix ? ' ' + suffix(by[n]) : '')).join('\n');
 }
 
 async function getAlerts(env) {
@@ -499,30 +537,30 @@ async function capacityBlock(env, data, earning, deleted) {
   const metaRow = await env.DB.prepare(`SELECT value FROM meta WHERE key = 'apartments'`).first();
   const apartments = metaRow ? JSON.parse(metaRow.value) : [];
   const prop = apartments.find(a => (a.listingIds || []).includes(listingId));
-  const global = await globalCapacityBlock(env, apartments, arrival, departure);
+  const st = await getAuditSettings(env);
+  const doProperty = async () => {
+    if (!prop) return { blocked: false, reason: 'Listing not mapped to any property' };
+    if (!st.blockProperty) return { blocked: false, property: prop.name, reason: 'Per-property blocking is switched off in settings' };
+    const override = await env.DB.prepare(`SELECT threshold_override FROM date_overrides WHERE apartment_id = ? AND date = ?`).bind(prop.id, arrival).first();
+    const threshold = override && override.threshold_override != null ? override.threshold_override : prop.threshold;
+    const count = await getPropertyOccupancy(env, prop, arrival, departure);
+    if (count < threshold) return { blocked: false, property: prop.name, count, threshold };
+
+    const occupied = await getOccupiedApartments(env, arrival, departure);
+    const toBlock = prop.listingIds.filter(id => !occupied.has(Number(id)));
+    const failed = await blockMany(env, toBlock, arrival, departure);
+    const span = arrival + ' \u2192 ' + departure;
+    if (failed.length) {
+      await addAlert(env, 'error', 'Block incomplete: ' + prop.name + ' \u2014 ' + failed.length + ' of ' + toBlock.length + ' listing(s) still open', span + ' \u00b7 ' + failed.map(f => f.id + ' (HTTP ' + f.status + ')').join(', '), arrival);
+      await sendTelegramAlert(env, '\u26a0\ufe0f ' + prop.name + ' block INCOMPLETE ' + span + ' (' + failed.length + ' of ' + toBlock.length + ' listings failed)');
+    }
+    if (toBlock.length) await sendTelegramAlert(env, '\ud83d\udeab ' + prop.name + ' full (' + count + '/' + threshold + ') \u2014 blocked ' + span);
+    await addAlert(env, 'capacity', 'Capacity hit: ' + prop.name + ' (' + count + '/' + threshold + ') \u2014 property blocked', span + ' \u00b7 ' + (toBlock.length - failed.length) + ' of ' + toBlock.length + ' listing(s) closed', arrival);
+    return { blocked: true, property: prop.name, count, threshold, blockedListings: toBlock };
+  };
+  const global = st.blockTotal ? await globalCapacityBlock(env, apartments, arrival, departure) : null;
   if (global && global.hit) return { blocked: true, earning, deleted, global };
-  if (!prop) return { blocked: false, earning, deleted, global, reason: 'Listing not mapped to any property' };
-
-  const override = await env.DB.prepare(`SELECT threshold_override FROM date_overrides WHERE apartment_id = ? AND date = ?`).bind(prop.id, arrival).first();
-  const threshold = override && override.threshold_override != null ? override.threshold_override : prop.threshold;
-
-  const count = await getPropertyOccupancy(env, prop, arrival, departure);
-  if (count < threshold) return { blocked: false, earning, deleted, global, property: prop.name, count, threshold };
-
-  const occupied = await getOccupiedApartments(env, arrival, departure);
-  const toBlock = prop.listingIds.filter(id => !occupied.has(Number(id)));
-  const failed = [];
-  for (const id of toBlock) {
-    const res = await blockDates(env, id, arrival, departure);
-    if (!(res.status >= 200 && res.status < 300)) failed.push(id + ' (HTTP ' + res.status + ')');
-  }
-  if (failed.length) {
-    await addAlert(env, 'error', 'Block failed: ' + prop.name + ' — ' + failed.length + ' listing(s) still open', failed.join(', ') + ' — ' + arrival + ' → ' + departure, arrival);
-    await sendTelegramAlert(env, '⚠️ Block FAILED for ' + prop.name + ': ' + failed.join(', ') + ' ' + arrival + ' to ' + departure);
-  }
-  if (toBlock.length) await sendTelegramAlert(env, '🚫 Capacity hit — ' + prop.name + ' (' + count + '/' + threshold + ') ' + arrival + ' to ' + departure + '. Blocked: ' + toBlock.join(', ') + (failed.length ? ' (failed: ' + failed.join(', ') + ')' : ''));
-  await addAlert(env, 'capacity', 'Capacity hit: ' + prop.name + ' (' + count + '/' + threshold + ')', 'Blocked ' + toBlock.length + ' listing(s) ' + arrival + ' → ' + departure, arrival);
-  return { blocked: true, earning, deleted, global, property: prop.name, count, threshold, blockedListings: toBlock };
+  return Object.assign({ earning, deleted, global }, await doProperty());
 }
 
 // ### 10 --- capacity audit (cron every 15 min + on demand): capacity hit in our DB but a listing still open on Smoobu = overbooking risk; open/closed comes from Smoobu's rates endpoint (one call for all listings)
@@ -534,7 +572,10 @@ function addDaysIso(iso, n) {
 
 async function getAuditSettings(env) {
   const row = await env.DB.prepare(`SELECT value FROM meta WHERE key = 'audit_settings'`).first();
-  return Object.assign({ autoBlock: false, days: 60 }, row ? JSON.parse(row.value) : {});
+  const st = Object.assign({ autoBlock: false, days: 60 }, row ? JSON.parse(row.value) : {});
+  if (typeof st.blockProperty !== 'boolean') st.blockProperty = true;
+  if (typeof st.blockTotal !== 'boolean') st.blockTotal = st.globalMode !== 'off';
+  return st;
 }
 
 async function smoobuAvailability(env, ids, from, to) {
@@ -553,7 +594,7 @@ async function smoobuAvailability(env, ids, from, to) {
   return open;
 }
 
-async function smoobuOurBlocks(env, from, to) {
+async function smoobuOurBlocks(env, from, to, blocksOut) {
   const ours = {};
   for (let page = 1; page <= 15; page++) {
     const res = await getBookings(env, { from, to, page, pageSize: 100 });
@@ -563,6 +604,7 @@ async function smoobuOurBlocks(env, from, to) {
       if (b['guest-name'] !== 'Blocked Period' && b.email !== 'blocked@placeholder.local') return;
       const set = ours[String(b.apartment.id)] || (ours[String(b.apartment.id)] = new Set());
       for (let d = b.arrival; d < b.departure; d = addDaysIso(d, 1)) set.add(d);
+      if (blocksOut) (blocksOut[String(b.apartment.id)] = blocksOut[String(b.apartment.id)] || []).push({ id: String(b.id), from: b.arrival, to: b.departure });
     });
     if (!body.page_count || page >= body.page_count) break;
   }
@@ -587,68 +629,98 @@ async function runAudit(env) {
   const ov = (await env.DB.prepare(`SELECT apartment_id, date, threshold_override FROM date_overrides WHERE threshold_override IS NOT NULL`).all()).results;
   const avail = await smoobuAvailability(env, apartments.flatMap(a => (a.listingIds || []).map(String)), today, addDaysIso(end, -1));
   let ours = {};
-  try { ours = await smoobuOurBlocks(env, today, end); } catch (e) {}
+  const blocksBy = {};
+  try { ours = await smoobuOurBlocks(env, today, end, blocksBy); } catch (e) {}
   const globalHit = new Set();
   for (let d = today; d < end; d = addDaysIso(d, 1)) {
     const total = bk.filter(b => b.m_arrival <= d && d < b.m_departure).length;
     const sum = apartments.reduce((t, p) => t + effThreshold(p, ov, d), 0);
-    if (sum > 0 && total >= sum) globalHit.add(d);
+    if (st.blockTotal && sum > 0 && total >= sum) globalHit.add(d);
   }
   const risks = [], stucks = [];
+  const pack = (prop, by) => {
+    const dates = Object.keys(by).sort();
+    if (!dates.length) return [];
+    return dateRanges(dates).map(g => {
+      const inR = dates.filter(d => d >= g.from && d <= g.to), per = {};
+      inR.forEach(d => by[d].forEach(lid => (per[lid] = per[lid] || []).push(d)));
+      const items = [];
+      Object.keys(per).forEach(lid => dateRanges(per[lid]).forEach(x => items.push({ lid, from: x.from, to: x.to })));
+      return { prop: prop.name, propId: prop.id, from: g.from, to: g.to, nights: inR.length, listings: Object.keys(per).length, items };
+    });
+  };
   for (const prop of apartments) {
     const ids = (prop.listingIds || []).map(String);
-    const open = {}, stuckD = {};
+    const openBy = {}, stuckBy = {};
     for (let d = today; d < end; d = addDaysIso(d, 1)) {
       const count = bk.filter(b => ids.includes(String(b.m_apartment_id)) && b.m_arrival <= d && d < b.m_departure).length;
       const th = effThreshold(prop, ov, d);
-      if (count < th && !globalHit.has(d)) { ids.forEach(lid => { if (ours[lid] && ours[lid].has(d)) (stuckD[lid] = stuckD[lid] || []).push(d); }); continue; }
-      ids.forEach(lid => { if (avail[lid] && avail[lid].has(d)) (open[lid] = open[lid] || []).push(d); });
+      if (!((st.blockProperty && count >= th) || globalHit.has(d))) {
+        const sl = ids.filter(lid => ours[lid] && ours[lid].has(d));
+        if (sl.length) stuckBy[d] = sl;
+        continue;
+      }
+      const ol = ids.filter(lid => avail[lid] && avail[lid].has(d));
+      if (ol.length) openBy[d] = ol;
     }
-    Object.keys(open).forEach(lid => {
-      let from = open[lid][0], prev = from;
-      const flush = () => risks.push({ prop: prop.name, lid, from, to: prev });
-      open[lid].slice(1).forEach(d => { if (d === addDaysIso(prev, 1)) prev = d; else { flush(); from = d; prev = d; } });
-      flush();
+    pack(prop, openBy).forEach(x => risks.push(x));
+    pack(prop, stuckBy).forEach(x => {
+      const sid = new Set();
+      x.blocks = [];
+      x.items.forEach(it => (blocksBy[it.lid] || []).forEach(bl => {
+        if (bl.from < addDaysIso(it.to, 1) && bl.to > it.from && !sid.has(bl.id)) { sid.add(bl.id); x.blocks.push({ id: bl.id, lid: it.lid, from: bl.from, to: bl.to }); }
+      }));
+      stucks.push(x);
     });
-    Object.keys(stuckD).forEach(lid => dateRanges(stuckD[lid]).forEach(g => stucks.push({ prop: prop.name, lid, from: g.from, to: g.to })));
   }
   const stRow = await env.DB.prepare(`SELECT value FROM meta WHERE key = 'audit_state'`).first();
   const seen = new Set(stRow ? JSON.parse(stRow.value) : []);
   const keep = [];
   let blocked = 0;
-  for (const rk of risks) {
-    const key = rk.lid + '|' + rk.from + '|' + rk.to, label = rk.prop + ' (listing ' + rk.lid + ') ' + rk.from + ' → ' + rk.to;
-    if (st.autoBlock) {
-      const res = await blockDates(env, rk.lid, rk.from, addDaysIso(rk.to, 1));
-      if (res.status >= 200 && res.status < 300) {
-        blocked++;
-        await addAlert(env, 'capacity', 'Audit auto-blocked: ' + rk.prop + ' (listing ' + rk.lid + ')', 'Capacity was hit but the listing was open on Smoobu ' + rk.from + ' → ' + rk.to, rk.from);
-        await sendTelegramAlert(env, '🛠 Audit auto-blocked ' + label);
-        continue;
+  const rkKey = rk => 'P|' + rk.propId + '|' + rk.from + '|' + rk.to;
+  let openLeft = risks;
+  if (st.autoBlock && risks.length) {
+    const done = [], bad = [];
+    for (const rk of risks) {
+      let okAll = true;
+      const fails = [];
+      for (const it of rk.items) {
+        const res = await blockDates(env, it.lid, it.from, addDaysIso(it.to, 1));
+        if (res.status >= 200 && res.status < 300) blocked++;
+        else { okAll = false; fails.push(it.lid + ' HTTP ' + res.status + ' ' + String((res.body && (res.body.detail || res.body.title)) || '').slice(0, 60)); }
       }
-      keep.push(key);
-      if (!seen.has(key)) {
-        await addAlert(env, 'error', 'Audit could not block ' + rk.prop + ' (listing ' + rk.lid + ')', 'HTTP ' + res.status + ' ' + JSON.stringify(res.body).slice(0, 160) + ' — ' + rk.from + ' → ' + rk.to, rk.from);
-        await sendTelegramAlert(env, '⚠️ Audit could NOT block ' + label);
+      if (okAll) done.push(rk); else bad.push(Object.assign({ fails }, rk));
+    }
+    if (done.length) {
+      await addAlert(env, 'capacity', 'Audit auto-blocked ' + done.length + ' date range(s)', summarize(done), done[0].from);
+      await sendTelegramAlert(env, '\ud83d\udee0 Audit auto-blocked (properties were full but open):\n' + summarize(done));
+    }
+    if (bad.length) {
+      const fresh = bad.filter(rk => !seen.has(rkKey(rk)));
+      bad.forEach(rk => keep.push(rkKey(rk)));
+      if (fresh.length) {
+        await addAlert(env, 'error', 'Audit could not fully block ' + bad.length + ' date range(s)', bad.map(rk => rk.prop + ' ' + fmtRange(rk.from, rk.to) + ' \u2014 ' + rk.fails.join('; ')).join('\n'), bad[0].from);
+        await sendTelegramAlert(env, '\u26a0\ufe0f Auto-block FAILED \u2014 still OPEN on Smoobu:\n' + summarize(bad));
       }
-      continue;
     }
-    keep.push(key);
-    if (!seen.has(key)) {
-      await addAlert(env, 'risk', 'Capacity full but open on Smoobu: ' + rk.prop + ' (listing ' + rk.lid + ')', rk.from + ' → ' + rk.to + ' — block it, or turn on auto-block in Settings', rk.from);
-      await sendTelegramAlert(env, '⚠️ Capacity full but OPEN on Smoobu: ' + label);
-    }
+    openLeft = bad;
+    await replaceAlerts(env, 'risk', null);
+  } else {
+    risks.forEach(rk => keep.push(rkKey(rk)));
+    if (risks.length) {
+      const nProps = new Set(risks.map(x => x.prop)).size;
+      await replaceAlerts(env, 'risk', 'Capacity full but open on Smoobu \u2014 ' + nProps + ' propert' + (nProps > 1 ? 'ies' : 'y') + ', ' + risks.length + ' date range(s)', summarize(risks, g => '(' + Math.max.apply(null, g.map(x => x.listings)) + ' listings open)') + '\nBlock them, or turn on auto-block in Settings.', risks[0].from);
+      if (risks.some(rk => !seen.has(rkKey(rk)))) await sendTelegramAlert(env, '\u26a0\ufe0f Capacity full but OPEN on Smoobu:\n' + summarize(risks));
+    } else await replaceAlerts(env, 'risk', null);
   }
-  for (const sk of stucks) {
-    const key = 'S|' + sk.lid + '|' + sk.from + '|' + sk.to;
-    keep.push(key);
-    if (seen.has(key)) continue;
-    await addAlert(env, 'stuck', 'Stuck block: ' + sk.prop + ' (listing ' + sk.lid + ')', 'Under capacity in our database but still blocked on Smoobu ' + sk.from + ' → ' + sk.to + ' — unblock it in Smoobu if it is not intended', sk.from);
-    await sendTelegramAlert(env, '🔒 Stuck block (under capacity but blocked): ' + sk.prop + ' listing ' + sk.lid + ' ' + sk.from + ' to ' + sk.to);
-  }
+  stucks.forEach(sk => keep.push('S|' + sk.propId + '|' + sk.from + '|' + sk.to));
+  if (stucks.length) {
+    await replaceAlerts(env, 'stuck', 'Stuck blocks \u2014 under capacity but still blocked: ' + stucks.length + ' date range(s)', summarize(stucks) + '\nUnblock them if that is not intended.', stucks[0].from);
+    if (stucks.some(sk => !seen.has('S|' + sk.propId + '|' + sk.from + '|' + sk.to))) await sendTelegramAlert(env, '\ud83d\udd12 Under capacity but still blocked:\n' + summarize(stucks));
+  } else await replaceAlerts(env, 'stuck', null);
   await setMeta(env, 'audit_state', keep);
   await setMeta(env, 'audit_snapshot', { generated_at: new Date().toISOString(), risks, stucks });
-  return { success: true, from: today, to: end, risks: risks.length, stuck: stucks.length, blocked, autoBlock: !!st.autoBlock };
+  return { success: true, from: today, to: end, risks: openLeft.length, stuck: stucks.length, blocked, autoBlock: !!st.autoBlock };
 }
 
 async function getAuditSnapshot(env) {

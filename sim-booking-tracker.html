@@ -34,8 +34,8 @@
   .monthRow th { height:22px; position:sticky; top:0; background:var(--panel); z-index:2; }
   .monthRow th.monthCell { overflow:visible; text-align:left; cursor:pointer; }
   .monthLbl { position:sticky; left:98px; display:inline-block; white-space:nowrap; padding:0 6px; color:var(--accent); font-weight:bold; }
-  .dateRow th { height:34px; position:sticky; top:62px; background:#1c2a1f; z-index:2; }
-  .grandRow td { height:40px; position:sticky; top:22px; background:#1c2a1f; z-index:2; font-weight:bold; font-size:13px; color:var(--accent); }
+  .dateRow th { height:34px; position:sticky; top:62px; background:#141f17; z-index:2; border-bottom:2px solid var(--line); }
+  .grandRow td { height:40px; position:sticky; top:22px; background:#2a4030; z-index:2; font-weight:bold; font-size:13px; color:var(--accent); }
   .todayCol { box-shadow:inset 0 0 0 999px rgba(224,198,52,.12); }
   .todayHead { box-shadow:inset 0 0 0 999px rgba(224,198,52,.35); }
   .monthRow th.stickyCol, .dateRow th.stickyCol, .grandRow td.stickyCol { z-index:3; }
@@ -80,6 +80,7 @@
 <div id="alertBar"></div>
 <h3 style="display:flex;align-items:center;gap:6px;flex-wrap:nowrap;white-space:nowrap;">Calendar <button id="calPrevBtn" style="margin:0;">&#9664;</button><span id="calRangeLabel" style="font-size:10px;color:var(--dim);white-space:nowrap;"></span><button id="calNextBtn" style="margin:0;">&#9654;</button><button id="calTodayBtn" style="margin:0;" title="Back to the default view (starts yesterday)">Today</button></h3>
 <div class="calScroll"><div id="calendarWrap"></div></div>
+<div id="notesWrap"></div>
 
 <datalist id="guestNames"></datalist>
 <datalist id="channelNames"></datalist>
@@ -100,6 +101,8 @@
     <div style="font-size:10px;color:var(--dim);font-weight:normal;">Runs every 15 minutes: if a property is at capacity in our database but a listing is still open on Smoobu, you get an alert (and Telegram).</div>
     <label style="display:flex;gap:8px;align-items:center;"><input type="checkbox" id="audAuto" style="width:auto;margin:0;"> Auto-block open listings when capacity is hit</label>
     <label>Days ahead to check<input type="number" id="audDays" min="1" max="120" value="60"></label>
+    <label style="display:flex;gap:8px;align-items:center;"><input type="checkbox" id="audProp" style="width:auto;margin:0;"> Block a property when it reaches its own threshold</label>
+    <label style="display:flex;gap:8px;align-items:center;"><input type="checkbox" id="audTotal" style="width:auto;margin:0;"> Block ALL properties when the total reaches the combined threshold</label>
     <div class="modalBtnRow" style="margin:12px 0 0;border:0;padding:0;"><button id="audRunBtn">Run check now</button><button id="audSaveBtn">Save</button></div>
     <div id="audStatus" style="font-size:11px;color:var(--dim);margin-top:8px;font-weight:normal;"></div>
   </div>
@@ -216,6 +219,10 @@ function openPropertySummary(apt){
   const nights=list.reduce((s,b)=>s+Math.round((toDate(b.m_departure)-toDate(b.m_arrival))/86400000),0);
   const earn=list.reduce((s,b)=>s+(Number(b.details&&b.details.price)||0),0);
 
+  const nmWrap=document.createElement('label');
+  nmWrap.innerHTML='Name<input id="ps_name" type="text" style="margin-top:3px;">';
+  modalFields.appendChild(nmWrap);
+  document.getElementById('ps_name').value=apt.name;
   const thWrap=document.createElement('label');
   thWrap.innerHTML='Threshold<div style="display:flex;gap:6px;margin-top:3px;"><input id="ps_th" type="number" value="'+apt.threshold+'" style="width:80px"><button id="ps_thSave">Save</button></div>';
   modalFields.appendChild(thWrap);
@@ -237,10 +244,14 @@ function openPropertySummary(apt){
   modalBackdrop.classList.add('open');
   document.getElementById('ps_thSave').onclick=()=>{
     const v=Number(document.getElementById('ps_th').value)||1;
-    apt.threshold=v;
+    const nv=document.getElementById('ps_name').value.trim();
+    if(!nv){setModalStatus('A property needs a name.','err');return;}
+    if(apartments.some(o=>o!==apt&&String(o.name).toLowerCase()===nv.toLowerCase())){setModalStatus('Another property already has that name.','err');return;}
+    const oldName=apt.name,oldTh=apt.threshold;
+    apt.threshold=v;apt.name=nv;
     setModalStatus('Saving…');
-    saveApartments().then(()=>{setModalStatus('Saved.','ok');renderCalendar();setTimeout(closeModal,450);})
-      .catch(err=>setModalStatus('Failed: '+err.message,'err'));
+    saveApartments().then(()=>{setModalStatus('Saved.','ok');renderCalendar();if(nv!==oldName)auditSoon();setTimeout(closeModal,450);})
+      .catch(err=>{apt.name=oldName;apt.threshold=oldTh;setModalStatus('Failed: '+err.message,'err');});
   };
 }
 
@@ -321,7 +332,18 @@ function openPropertiesDialog(){
     tbody.innerHTML='';
     apartments.forEach((a,idx)=>{
       const tr=document.createElement('tr');
-      const tdName=document.createElement('td');tdName.textContent=a.name;
+      const tdName=document.createElement('td');
+      const nameIn=document.createElement('input');nameIn.type='text';nameIn.value=a.name;nameIn.style.cssText='width:120px;';
+      nameIn.onchange=()=>{
+        const nv=nameIn.value.trim();
+        if(!nv){nameIn.value=a.name;setModalStatus('A property needs a name.','err');return;}
+        if(nv===a.name)return;
+        if(apartments.some((o,j)=>j!==idx&&String(o.name).toLowerCase()===nv.toLowerCase())){nameIn.value=a.name;setModalStatus('Another property already has that name.','err');return;}
+        const old=a.name;a.name=nv;
+        setModalStatus('Renaming\u2026');
+        saveApartments().then(()=>{setModalStatus('Renamed.','ok');renderCalendar();auditSoon();}).catch(err=>{a.name=old;nameIn.value=old;setModalStatus('Failed: '+err.message,'err');});
+      };
+      tdName.appendChild(nameIn);
       const tdListings=document.createElement('td');
       tdListings.appendChild(buildListingGrid(a.listingIds=a.listingIds||[],idx,()=>{setModalStatus('Saving…');saveApartments().then(()=>setModalStatus('Saved.','ok')).catch(err=>setModalStatus('Failed: '+err.message,'err'));}));
       const tdActions=document.createElement('td');
@@ -489,14 +511,14 @@ document.getElementById('calcBtn').onclick=()=>{calcExpr='';calcRender();calcBac
 document.getElementById('calcXBtn').onclick=()=>calcBackdrop.classList.remove('open');
 
 // ### 3b4 --- capacity check settings (dialog) + on-demand run
-const audBackdrop=document.getElementById('audBackdrop'),audAuto=document.getElementById('audAuto'),audDays=document.getElementById('audDays'),audStatus=document.getElementById('audStatus');
+const audBackdrop=document.getElementById('audBackdrop'),audAuto=document.getElementById('audAuto'),audDays=document.getElementById('audDays'),audProp=document.getElementById('audProp'),audTotal=document.getElementById('audTotal'),audStatus=document.getElementById('audStatus');
 document.getElementById('audBtn').onclick=()=>{
   audStatus.textContent='';audBackdrop.classList.add('open');
-  callWorker('getMeta',{key:'audit_settings'}).then(res=>{const v=res.value||{};audAuto.checked=!!v.autoBlock;audDays.value=v.days||60;});
+  callWorker('getMeta',{key:'audit_settings'}).then(res=>{const v=res.value||{};audAuto.checked=!!v.autoBlock;audDays.value=v.days||60;audProp.checked=typeof v.blockProperty==='boolean'?v.blockProperty:true;audTotal.checked=typeof v.blockTotal==='boolean'?v.blockTotal:v.globalMode!=='off';});
 };
 document.getElementById('audXBtn').onclick=()=>audBackdrop.classList.remove('open');
 document.getElementById('audSaveBtn').onclick=()=>{
-  const v={autoBlock:audAuto.checked,days:Math.min(120,Math.max(1,parseInt(audDays.value,10)||60))};
+  const v={autoBlock:audAuto.checked,days:Math.min(120,Math.max(1,parseInt(audDays.value,10)||60)),blockProperty:audProp.checked,blockTotal:audTotal.checked};
   callWorker('setMeta',{key:'audit_settings',value:v}).then(()=>{audStatus.textContent='Saved.';});
 };
 document.getElementById('audRunBtn').onclick=()=>{
@@ -507,7 +529,21 @@ document.getElementById('audRunBtn').onclick=()=>{
   }).catch(e=>{audStatus.textContent='Failed: '+e.message;});
 };
 let auditTimer=null;
-function auditSoon(){clearTimeout(auditTimer);auditTimer=setTimeout(()=>callWorker('runAudit').then(()=>{loadAlerts();loadAuditSnapshot().then(renderCalendar);}).catch(()=>{}),4000);}
+const riskKey=x=>x.prop+'|'+x.from+'|'+x.to;
+function auditSoon(){
+  clearTimeout(auditTimer);
+  auditTimer=setTimeout(()=>{
+    const before=new Set(auditSnapshot.risks.map(riskKey));
+    callWorker('runAudit').then(()=>{
+      loadAlerts();
+      return loadAuditSnapshot();
+    }).then(()=>{
+      renderCalendar();
+      const fresh=auditSnapshot.risks.filter(x=>!before.has(riskKey(x)));
+      if(fresh.length&&!modalBackdrop.classList.contains('open'))openRiskModal(null);
+    }).catch(()=>{});
+  },700);
+}
 
 // ### 3c --- alert bar (cancellations, modifications, capacity, internal errors); x dismisses for good, click expands + jumps calendar to that date
 const alertBar=document.getElementById('alertBar');
@@ -799,7 +835,7 @@ function openAddBookingModal(apt,prefillRange){
       {key:'guest_name',label:'Guest name',list:'guestNames'},
       {key:'listing',label:'Listing',type:'select',optionsHtml:listingOptionsHtml(apt&&apt.listingIds?apt.listingIds[0]:'')},
       {key:'room_number',label:'Room number'},
-      {key:'guests',label:'Number of guests',type:'number'},
+      {key:'guests',label:'Number of guests',type:'number',value:'1'},
       {key:'channel',label:'Channel',list:'channelNames',value:'Private'},
       {key:'price',label:'Host earning £ per date range (price - commission; direct = price; blank = 0)',type:'number'},
       {key:'contact',label:'Contact number'},
@@ -995,7 +1031,10 @@ function renderCalendar(){
     const sum=bookings.filter(b=>isOccupiedNormal(ds,b)).reduce((t,b)=>t+nightly(b),0);
     const gcap=apartments.reduce((t,a)=>t+effTh(a,ds),0),gdef=apartments.reduce((t,a)=>t+(Number(a.threshold)||0),0);
     const ghit=gcap>0&&count>=gcap;
-    html+=`<td class="${ds===todayIso?'todayHead':''}" style="${ghit?'color:var(--danger)':''}">${count===0?'':count}${gcap!==gdef?'<sup style="color:#e0c634">'+gcap+'</sup>':''}<span class="dayline">${fmtGbp(sum)}</span></td>`;
+    const gRisk=auditSnapshot.risks.some(x=>x.from<=ds&&ds<=x.to);
+    const gStuck=auditSnapshot.stucks.some(x=>x.from<=ds&&ds<=x.to);
+    const gFlag=(gRisk?'<sup class="riskFlag" title="Full but still open on Smoobu — tap to see all" style="color:var(--danger);cursor:pointer;font-size:12px;padding:2px 4px;">&#9888;</sup>':'')+(gStuck?'<sup class="stuckFlag" title="Under capacity but still blocked on Smoobu — tap to see all" style="color:#e0c634;cursor:pointer;font-size:12px;padding:2px 4px;">&#128274;</sup>':'');
+    html+=`<td class="${ds===todayIso?'todayHead':''}" style="${ghit?'color:var(--danger)':''}">${count===0?'':count}${gcap!==gdef?'<sup style="color:#e0c634">'+gcap+'</sup>':''}${gFlag}<span class="dayline">${fmtGbp(sum)}</span></td>`;
   });
   html+='</tr>';
   html+='<tr class="dateRow"><th class="stickyCol bookingPlusCell" style="cursor:pointer">Booking+</th>';
@@ -1018,8 +1057,7 @@ function renderCalendar(){
       const th=g.apt?(ov&&ov.threshold_override!=null?ov.threshold_override:g.apt.threshold):null;
       const hit=th!=null&&count>=th;
       const gs=g.list.filter(b=>isOccupiedNormal(ds,b)).reduce((t,b)=>t+nightly(b),0);
-      const risk=g.apt&&propRisk(g.name,ds),stuck=g.apt&&propStuck(g.name,ds);
-      const flag=risk?'<sup class="riskFlag" data-prop="'+encodeURIComponent(g.name)+'" title="At capacity but still open on Smoobu — click to block" style="color:var(--danger);cursor:pointer;font-size:12px;padding:2px 4px;">&#9888;</sup>':(stuck?'<sup title="Under capacity but still blocked on Smoobu" style="color:#e0c634;cursor:help;">&#128274;</sup>':'');
+      const flag='';
       html+=`<td class="${ds===todayIso?'todayCol':''}" style="${hit?'color:var(--danger)':''}">${count===0?'':count}${ov&&ov.threshold_override!=null?'<sup style="color:#e0c634">'+th+'</sup>':''}${flag}<span class="dayline">${fmtGbp(gs)}</span></td>`;
     });
     html+='</tr>';
@@ -1092,15 +1130,51 @@ function renderCalendar(){
       if(b)openEditBookingModal(b);
     };
   });
+  renderNotes();
   calendarWrap.querySelectorAll('.monthCell').forEach(th=>{
     th.onclick=()=>openMonthModal(th.dataset.from,th.dataset.to,th.dataset.label);
   });
+  calendarWrap.querySelectorAll('.stuckFlag').forEach(el=>{
+    el.onclick=(e)=>{e.stopPropagation();openStuckModal();};
+  });
   calendarWrap.querySelectorAll('.riskFlag').forEach(el=>{
-    el.onclick=(e)=>{e.stopPropagation();openRiskModal(decodeURIComponent(el.dataset.prop));};
+    el.onclick=(e)=>{e.stopPropagation();openRiskModal(null);};
   });
   calendarWrap.querySelectorAll('.emptyCell').forEach(td=>{
     td.onclick=()=>emptyCellClick(td);
   });
+}
+
+// ### 9e --- all notes from today onward (day notes + booking notes), under the calendar; click a row to jump the calendar there
+function renderNotes(){
+  const todayIso=toISO(new Date()),list=[];
+  overrides.forEach(o=>{if(o.apartment_id==='__day__'&&o.notes&&o.date>=todayIso)list.push({date:o.date,src:'Day',note:o.notes});});
+  bookings.forEach(b=>{
+    if(b.details&&b.details.note&&b.m_departure>todayIso){
+      const pr=resolveApartment(String(b.m_apartment_id));
+      list.push({date:b.m_arrival<todayIso?todayIso:b.m_arrival,src:(b.guest_name||'Booking')+' \u00b7 '+(pr?pr.name:(b.m_apartment_name||''))+(b.room_number?' r'+b.room_number:''),note:b.details.note,booking:b.m_arrival+' \u2192 '+b.m_departure});
+    }
+  });
+  list.sort((a,b)=>a.date.localeCompare(b.date));
+  const wrap=document.getElementById('notesWrap');
+  wrap.innerHTML='';
+  const h=document.createElement('h3');h.textContent='Notes from today';wrap.appendChild(h);
+  if(!list.length){const e=document.createElement('div');e.style.cssText='font-size:11px;color:var(--dim);';e.textContent='No notes.';wrap.appendChild(e);return;}
+  const t=document.createElement('table');t.style.cssText='width:100%;border-collapse:collapse;font-size:11px;';
+  const hr=document.createElement('tr');
+  ['Date','For','Note'].forEach(x=>{const th=document.createElement('th');th.textContent=x;th.style.cssText='text-align:left;padding:4px 6px;border-bottom:1px solid var(--line);color:var(--dim);';hr.appendChild(th);});
+  t.appendChild(hr);
+  list.forEach(n=>{
+    const tr=document.createElement('tr');tr.style.cursor='pointer';
+    [n.date+(n.booking?'':''),n.src+(n.booking?' ('+n.booking+')':''),n.note].forEach((x,k)=>{
+      const td=document.createElement('td');td.textContent=x;
+      td.style.cssText='padding:4px 6px;border-bottom:1px dashed var(--line);vertical-align:top;'+(k===2?'white-space:pre-wrap;':'');
+      tr.appendChild(td);
+    });
+    tr.onclick=()=>{windowStart=addDays(toDate(n.date),-1);renderCalendar();};
+    t.appendChild(tr);
+  });
+  wrap.appendChild(t);
 }
 
 // ### 9c --- click a warning flag on a property's subtotal: list the ranges that are full but still open on Smoobu, block them, show each result or error
@@ -1112,42 +1186,116 @@ function resetModalChrome(){
   setModalStatus('');
 }
 function openRiskModal(propName){
-  const risks=auditSnapshot.risks.filter(r=>r.prop===propName);
-  modalTitle.textContent='Full but open on Smoobu — '+propName;
+  const risks=auditSnapshot.risks.filter(r=>!propName||r.prop===propName).slice().sort((a,b)=>a.prop===b.prop?a.from.localeCompare(b.from):a.prop.localeCompare(b.prop));
+  modalTitle.textContent='Full but open on Smoobu'+(propName?' \u2014 '+propName:'');
   modalFields.innerHTML='';
   resetModalChrome();
   const note=document.createElement('div');
   note.style.cssText='font-size:10px;color:var(--dim);font-weight:normal;margin-bottom:8px;';
-  note.textContent='From the capacity check'+(auditSnapshot.generated_at?' at '+auditSnapshot.generated_at.slice(0,16).replace('T',' ')+' UTC':'')+'. Untick any you do not want blocked.';
+  note.textContent='From the capacity check'+(auditSnapshot.generated_at?' at '+auditSnapshot.generated_at.slice(0,16).replace('T',' ')+' UTC':'')+'. Each line closes the whole property for those dates. Untick any you do not want blocked.';
   modalFields.appendChild(note);
-  if(!risks.length){const e=document.createElement('div');e.textContent='Nothing open any more — the next check will clear the flag.';modalFields.appendChild(e);modalBackdrop.classList.add('open');return;}
+  if(!risks.length){const e=document.createElement('div');e.textContent='Nothing open any more \u2014 the next check will clear the flag.';modalFields.appendChild(e);modalBackdrop.classList.add('open');return;}
+  let lastProp=null;
   const rows=risks.map(rk=>{
+    if(rk.prop!==lastProp){
+      lastProp=rk.prop;
+      const h=document.createElement('div');h.textContent=rk.prop;
+      h.style.cssText='margin-top:10px;font-size:12px;color:var(--accent);';
+      modalFields.appendChild(h);
+    }
+    const items=rk.items||[{lid:rk.lid,from:rk.from,to:rk.to}];
+    const nights=rk.nights||Math.round((toDate(rk.to)-toDate(rk.from))/86400000)+1;
+    const lids=[...new Set(items.map(x=>String(x.lid)))];
     const row=document.createElement('div');
     row.style.cssText='display:flex;gap:8px;align-items:flex-start;padding:5px 0;border-top:1px dashed var(--line);font-size:11px;font-weight:normal;';
     const cb=document.createElement('input');cb.type='checkbox';cb.checked=true;cb.style.cssText='width:auto;margin:2px 0 0;';
     const txt=document.createElement('div');txt.style.flex='1';
-    const nights=Math.round((toDate(rk.to)-toDate(rk.from))/86400000)+1;
-    txt.textContent=listingLabel(rk.lid)+' · '+rk.from+' → '+rk.to+' ('+nights+' night'+(nights>1?'s':'')+')';
+    txt.textContent=rk.from+' \u2192 '+rk.to+' ('+nights+' night'+(nights>1?'s':'')+') \u00b7 '+lids.length+' listing'+(lids.length>1?'s':'')+' open';
+    const sub=document.createElement('div');sub.style.cssText='font-size:10px;color:var(--dim);margin-top:2px;';
+    sub.textContent=lids.map(listingLabel).join(', ');
     const st=document.createElement('div');st.style.cssText='font-size:10px;margin-top:2px;';
-    txt.appendChild(st);
+    txt.appendChild(sub);txt.appendChild(st);
     row.appendChild(cb);row.appendChild(txt);modalFields.appendChild(row);
-    return {rk:rk,cb:cb,st:st};
+    return {rk:rk,items:items,cb:cb,st:st};
   });
   const btn=document.createElement('button');btn.textContent='Block selected';btn.style.cssText='margin:10px 0 0;';
   btn.onclick=()=>{
     const picked=rows.filter(x=>x.cb.checked);
-    if(!picked.length){setModalStatus('Tick at least one range.','err');return;}
-    btn.disabled=true;setModalStatus('Blocking…');
-    let ok=0,fail=0;
+    if(!picked.length){setModalStatus('Tick at least one date range.','err');return;}
+    btn.disabled=true;setModalStatus('Blocking\u2026');
+    let okR=0,failR=0;
     picked.reduce((p,x)=>p.then(()=>{
-      x.st.style.color='var(--dim)';x.st.textContent='Blocking…';
-      return callWorker('blockDates',{apartmentId:x.rk.lid,arrivalDate:x.rk.from,departureDate:toISO(addDays(toDate(x.rk.to),1))}).then(res=>{
-        if(res.status>=200&&res.status<300){ok++;x.st.style.color='var(--accent)';x.st.textContent='Blocked.';x.cb.checked=false;x.cb.disabled=true;}
-        else{fail++;const b=res.body||{};x.st.style.color='var(--danger)';x.st.textContent='Failed (HTTP '+res.status+'): '+(b.detail||b.title||res.error||JSON.stringify(b));}
-      }).catch(err=>{fail++;x.st.style.color='var(--danger)';x.st.textContent='Failed: '+err.message;});
+      x.st.style.color='var(--dim)';x.st.textContent='Blocking\u2026';
+      const fails=[];let ok=0;
+      return x.items.reduce((q,it)=>q.then(()=>callWorker('blockDates',{apartmentId:it.lid,arrivalDate:it.from,departureDate:toISO(addDays(toDate(it.to),1))}).then(res=>{
+        if(res.status>=200&&res.status<300)ok++;
+        else{const b=res.body||{};fails.push(listingLabel(it.lid)+': HTTP '+res.status+' '+(b.detail||b.title||res.error||JSON.stringify(b)));}
+      }).catch(err=>{fails.push(listingLabel(it.lid)+': '+err.message);})),Promise.resolve()).then(()=>{
+        if(!fails.length){okR++;x.st.style.color='var(--accent)';x.st.textContent='Property blocked ('+ok+' listing'+(ok>1?'s':'')+').';x.cb.checked=false;x.cb.disabled=true;}
+        else{failR++;x.st.style.color='var(--danger)';x.st.textContent=(ok?ok+' blocked, ':'')+fails.length+' failed \u2014 '+fails.join(' | ');}
+      });
     }),Promise.resolve()).then(()=>{
       btn.disabled=false;
-      setModalStatus(ok+' blocked'+(fail?', '+fail+' failed — see below':'')+'.',fail?'err':'ok');
+      setModalStatus(okR+' range'+(okR===1?'':'s')+' blocked'+(failR?', '+failR+' with errors \u2014 see below':'')+'.',failR?'err':'ok');
+      return callWorker('runAudit').then(()=>loadAuditSnapshot()).then(renderCalendar).then(loadAlerts).catch(()=>{});
+    });
+  };
+  modalFields.appendChild(btn);
+  modalBackdrop.classList.add('open');
+}
+
+// ### 9c2 --- tap the lock flag on G.Total: every under-capacity-but-still-blocked range, grouped by property, with Unblock selected
+function openStuckModal(){
+  const stucks=auditSnapshot.stucks.slice().sort((a,b)=>a.prop===b.prop?a.from.localeCompare(b.from):a.prop.localeCompare(b.prop));
+  modalTitle.textContent='Blocked but under capacity';
+  modalFields.innerHTML='';
+  resetModalChrome();
+  const note=document.createElement('div');
+  note.style.cssText='font-size:10px;color:var(--dim);font-weight:normal;margin-bottom:8px;';
+  note.textContent='From the capacity check'+(auditSnapshot.generated_at?' at '+auditSnapshot.generated_at.slice(0,16).replace('T',' ')+' UTC':'')+'. These blocks were made by this system and the property is now under its threshold. Untick any you want to keep.';
+  modalFields.appendChild(note);
+  if(!stucks.length){const e=document.createElement('div');e.textContent='Nothing stuck any more.';modalFields.appendChild(e);modalBackdrop.classList.add('open');return;}
+  let lastProp=null;
+  const rows=stucks.map(sk=>{
+    if(sk.prop!==lastProp){
+      lastProp=sk.prop;
+      const h=document.createElement('div');h.textContent=sk.prop;
+      h.style.cssText='margin-top:10px;font-size:12px;color:var(--accent);';
+      modalFields.appendChild(h);
+    }
+    const blocks=sk.blocks||[];
+    const nights=sk.nights||Math.round((toDate(sk.to)-toDate(sk.from))/86400000)+1;
+    const row=document.createElement('div');
+    row.style.cssText='display:flex;gap:8px;align-items:flex-start;padding:5px 0;border-top:1px dashed var(--line);font-size:11px;font-weight:normal;';
+    const cb=document.createElement('input');cb.type='checkbox';cb.checked=blocks.length>0;cb.disabled=!blocks.length;cb.style.cssText='width:auto;margin:2px 0 0;';
+    const txt=document.createElement('div');txt.style.flex='1';
+    txt.textContent=sk.from+' \u2192 '+sk.to+' ('+nights+' night'+(nights>1?'s':'')+') \u00b7 '+blocks.length+' block'+(blocks.length===1?'':'s');
+    const sub=document.createElement('div');sub.style.cssText='font-size:10px;color:var(--dim);margin-top:2px;';
+    sub.textContent=blocks.length?blocks.map(b=>listingLabel(b.lid)+' '+b.from+' \u2192 '+b.to).join(', '):'Run the capacity check again to load the block details.';
+    const st=document.createElement('div');st.style.cssText='font-size:10px;margin-top:2px;';
+    txt.appendChild(sub);txt.appendChild(st);
+    row.appendChild(cb);row.appendChild(txt);modalFields.appendChild(row);
+    return {sk:sk,blocks:blocks,cb:cb,st:st};
+  });
+  const btn=document.createElement('button');btn.textContent='Unblock selected';btn.style.cssText='margin:10px 0 0;';
+  btn.onclick=()=>{
+    const picked=rows.filter(x=>x.cb.checked&&!x.cb.disabled);
+    if(!picked.length){setModalStatus('Tick at least one range.','err');return;}
+    if(!confirm('Remove the system blocks for '+picked.length+' date range(s)?'))return;
+    btn.disabled=true;setModalStatus('Unblocking\u2026');
+    let okR=0,failR=0;
+    picked.reduce((p,x)=>p.then(()=>{
+      x.st.style.color='var(--dim)';x.st.textContent='Unblocking\u2026';
+      const fails=[];let ok=0;
+      return x.blocks.reduce((q,b)=>q.then(()=>callWorker('unblockOnSmoobu',{id:b.id}).then(res=>{
+        if(res.success)ok++;else fails.push(listingLabel(b.lid)+': '+(res.error||'failed'));
+      }).catch(err=>{fails.push(listingLabel(b.lid)+': '+err.message);})),Promise.resolve()).then(()=>{
+        if(!fails.length){okR++;x.st.style.color='var(--accent)';x.st.textContent='Unblocked ('+ok+' block'+(ok>1?'s':'')+').';x.cb.checked=false;x.cb.disabled=true;}
+        else{failR++;x.st.style.color='var(--danger)';x.st.textContent=(ok?ok+' removed, ':'')+fails.length+' failed \u2014 '+fails.join(' | ');}
+      });
+    }),Promise.resolve()).then(()=>{
+      btn.disabled=false;
+      setModalStatus(okR+' range'+(okR===1?'':'s')+' unblocked'+(failR?', '+failR+' with errors \u2014 see below':'')+'.',failR?'err':'ok');
       return callWorker('runAudit').then(()=>loadAuditSnapshot()).then(renderCalendar).then(loadAlerts).catch(()=>{});
     });
   };

@@ -157,7 +157,13 @@ function loadMissing(){
       });
       if(maxCount>=minThreshold)return null;
       return {id:b.id,prop:prop.name,ap:ap,arrival:b.arrival,departure:b.departure,count:maxCount,threshold:minThreshold};
-    }).filter(Boolean);
+    }).filter(Boolean).reduce((acc,x)=>{
+      const k=x.prop+'|'+x.arrival+'|'+x.departure;
+      let g=acc.find(y=>y.key===k);
+      if(!g){g={key:k,prop:x.prop,arrival:x.arrival,departure:x.departure,count:x.count,threshold:x.threshold,ids:[],names:[]};acc.push(g);}
+      g.ids.push(x.id);g.names.push(x.ap.name||x.ap.id);
+      return acc;
+    },[]);
     statusEl.textContent=sm.length+' Smoobu bookings in window, '+missing.length+' not in our database, '+stillLive.length+' still live on Smoobu, '+blockedIdle.length+' blocked but under threshold.';
     render();renderLive();renderBlocked();
   }).catch(e=>{statusEl.textContent='Load failed: '+e.message;});
@@ -239,7 +245,7 @@ function renderBlocked(){
   blkBody.innerHTML='';
   blockedIdle.forEach((x,i)=>{
     const tr=document.createElement('tr');
-    const cells=['',x.prop+' / '+(x.ap.name||x.ap.id),x.arrival+' → '+x.departure,x.count+' / '+x.threshold];
+    const cells=['',x.prop+' ('+x.ids.length+' listing'+(x.ids.length>1?'s':'')+': '+x.names.join(', ')+')',x.arrival+' → '+x.departure,x.count+' / '+x.threshold];
     cells.forEach((c,k)=>{
       const td=document.createElement('td');
       if(k===0){const cb=document.createElement('input');cb.type='checkbox';cb.checked=true;cb.dataset.i=i;td.appendChild(cb);}
@@ -255,12 +261,12 @@ document.getElementById('blkAllCb').onchange=e=>blkBody.querySelectorAll('input[
 document.getElementById('blkUnblockBtn').onclick=()=>{
   const picked=[...blkBody.querySelectorAll('input[type=checkbox]:checked')].map(c=>blockedIdle[+c.dataset.i]);
   if(!picked.length)return;
-  if(!confirm('Unblock '+picked.length+' date range(s) on Smoobu?'))return;
+  if(!confirm('Unblock '+picked.length+' property date range(s) on Smoobu?'))return;
   let ok=0,fail=0;
-  Promise.all(picked.map(x=>callWorker('unblockOnSmoobu',{id:x.id})
-    .then(r=>{if(r.success)ok++;else{fail++;logLine('err','#'+x.id+' '+(r.error||'failed'));}})
-    .catch(e=>{fail++;logLine('err','#'+x.id+' '+e.message);})
-  )).then(()=>{
+  Promise.all(picked.flatMap(x=>x.ids.map(id=>callWorker('unblockOnSmoobu',{id:id})
+    .then(r=>{if(r.success)ok++;else{fail++;logLine('err',x.prop+' #'+id+' '+(r.error||'failed'));}})
+    .catch(e=>{fail++;logLine('err',x.prop+' #'+id+' '+e.message);})
+  ))).then(()=>{
     logLine(fail?'err':'ok','Unblocked '+ok+' OK, '+fail+' failed.');
     loadMissing();
   });
